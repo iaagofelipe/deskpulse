@@ -11,19 +11,35 @@ mod todos;
 use std::env;
 use std::io::Read;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::process::Command as StdCommand;
+use std::sync::atomic::AtomicBool;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::watch;
 
+use crate::agenda::AgendaStore;
 use crate::approvals::ApprovalStore;
 use crate::events::EventBus;
 use crate::hooks::{
     default_hooks_path, install_hooks_to, run_hook_cli, uninstall_hooks_from, HookKind,
 };
-use crate::monitors::adb::AdbBridge;
+use crate::monitors::adb::{find_adb_path, parse_adb_devices, AdbBridge};
+use crate::monitors::antigravity::AntigravityMonitor;
 use crate::monitors::media::WindowsMediaBackend;
 use crate::monitors::system::SystemMonitor;
 use crate::server::{build_router, AppState};
+use crate::todos::TodoStore;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum TodoCommand {
+    List,
+    Add(String),
+    Done(String),
+    Rm(String),
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -32,6 +48,8 @@ pub enum Command {
     HookStop,
     InstallHooks,
     UninstallHooks,
+    Open,
+    Todo(TodoCommand),
 }
 
 pub fn parse_cli<I, S>(args: I) -> Result<Command, String>
@@ -49,7 +67,30 @@ where
         },
         Some("install-hooks") if parts.len() == 2 => Ok(Command::InstallHooks),
         Some("uninstall-hooks") if parts.len() == 2 => Ok(Command::UninstallHooks),
-        _ => Err("usage: deskpulse [serve|hook <pre-tool|stop>|install-hooks|uninstall-hooks]".to_string()),
+        Some("open") if parts.len() == 2 => Ok(Command::Open),
+        Some("todo") => match parts.get(2).map(String::as_str) {
+            Some("list") if parts.len() == 3 => Ok(Command::Todo(TodoCommand::List)),
+            Some("add") if parts.len() >= 4 => {
+                let text = parts[3..].join(" ");
+                if text.trim().is_empty() {
+                    Err("usage: deskpulse todo add <text...>".to_string())
+                } else {
+                    Ok(Command::Todo(TodoCommand::Add(text)))
+                }
+            }
+            Some("done") if parts.len() == 4 => {
+                Ok(Command::Todo(TodoCommand::Done(parts[3].clone())))
+            }
+            Some("rm") if parts.len() == 4 => Ok(Command::Todo(TodoCommand::Rm(parts[3].clone()))),
+            _ => Err(
+                "usage: deskpulse todo <list|add <text...>|done <id|index>|rm <id|index>>"
+                    .to_string(),
+            ),
+        },
+        _ => Err(
+            "usage: deskpulse [serve|open|todo <list|add|done|rm>|hook <pre-tool|stop>|install-hooks|uninstall-hooks]"
+                .to_string(),
+        ),
     }
 }
 
@@ -62,6 +103,7 @@ async fn run_serve() -> Result<(), String> {
         .await
         .map_err(|e| format!("failed to bind {addr}: {e}"))?;
 
+    let data_dir = config::deskpulse_data_dir();
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let events = Arc::new(EventBus::new());
     let approvals = Arc::new(ApprovalStore::new(
@@ -69,22 +111,42 @@ async fn run_serve() -> Result<(), String> {
         Duration::from_secs(cfg.approval_timeout_secs),
     ));
     let system = Arc::new(SystemMonitor::spawn(shutdown_rx.clone()));
-    let adb = Arc::new(AdbBridge::spawn(cfg.port, shutdown_rx));
+    let adb = Arc::new(AdbBridge::spawn(cfg.port, shutdown_rx.clone()));
+    let antigravity = Arc::new(AntigravityMonitor::spawn(shutdown_rx.clone()));
+    let agenda = Arc::new(AgendaStore::new(
+        data_dir.join("agenda_push.json"),
+        cfg.calendar_ics_url.clone(),
+    ));
+    agenda.spawn_poller(shutdown_rx);
+    let todos = Arc::new(TodoStore::open(data_dir.join("todos.json"))?);
     let media = Arc::new(WindowsMediaBackend::new());
 
     let app = build_router(AppState {
         token: cfg.token.clone(),
         port: cfg.port,
+        approval_timeout_secs: cfg.approval_timeout_secs,
+        config_path: cfg_path.clone(),
         events,
         approvals,
         system,
         adb,
         media,
+        antigravity,
+        agenda,
+        todos,
+        remote_approval_enabled: Arc::new(AtomicBool::new(cfg.remote_approval_enabled)),
+        calendar_ics_url: Arc::new(Mutex::new(cfg.calendar_ics_url.clone())),
     });
 
-    println!("DeskPulse rodando em http://127.0.0.1:{}/#token={}", cfg.port, cfg.token);
+    println!(
+        "DeskPulse rodando em http://127.0.0.1:{}/#token={}",
+        cfg.port, cfg.token
+    );
     println!("Config: {}", cfg_path.display());
-    println!("Plugue o celular Android via USB (Depuracao USB ativa) e abra http://127.0.0.1:{}/#token={}", cfg.port, cfg.token);
+    println!(
+        "Plugue o celular Android via USB (Depuracao USB ativa) e abra http://127.0.0.1:{}/#token={}",
+        cfg.port, cfg.token
+    );
 
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async {
@@ -95,6 +157,92 @@ async fn run_serve() -> Result<(), String> {
 
     let _ = shutdown_tx.send(true);
     result
+}
+
+fn run_adb_sync(adb_path: &std::path::Path, args: &[&str]) -> Result<String, String> {
+    let mut cmd = StdCommand::new(adb_path);
+    cmd.args(args);
+    #[cfg(windows)]
+    cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
+
+    let out = cmd
+        .output()
+        .map_err(|e| format!("failed to run adb: {e}"))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!("adb exited with {}", out.status)
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+fn run_open() -> Result<(), String> {
+    let cfg = config::load_or_create(&config::default_config_path())?;
+    let adb_path = find_adb_path()
+        .ok_or_else(|| "adb.exe nao encontrado no PATH ou Android SDK".to_string())?;
+    let devices_out = run_adb_sync(&adb_path, &["devices"])?;
+    let devices = parse_adb_devices(&devices_out);
+    let serial = devices
+        .first()
+        .ok_or_else(|| "nenhum dispositivo Android conectado via USB (adb devices vazio)".to_string())?;
+
+    let url = format!("http://127.0.0.1:{}/#token={}", cfg.port, cfg.token);
+    run_adb_sync(
+        &adb_path,
+        &[
+            "-s",
+            serial,
+            "shell",
+            "am",
+            "start",
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            &url,
+        ],
+    )?;
+    println!(
+        "DeskPulse aberto no dispositivo {serial} (http://127.0.0.1:{}/)",
+        cfg.port
+    );
+    Ok(())
+}
+
+fn run_todo(sub: TodoCommand) -> Result<(), String> {
+    let path = config::deskpulse_data_dir().join("todos.json");
+    let store = TodoStore::open(path)?;
+    match sub {
+        TodoCommand::List => {
+            let items = store.list();
+            if items.is_empty() {
+                println!("Nenhum to-do.");
+            } else {
+                for (i, item) in items.iter().enumerate() {
+                    let mark = if item.done { "x" } else { " " };
+                    println!("{}. [{}] {} ({})", i + 1, mark, item.text, item.id);
+                }
+            }
+        }
+        TodoCommand::Add(text) => {
+            let item = store.add(&text)?;
+            println!("Adicionado: [ ] {} ({})", item.text, item.id);
+        }
+        TodoCommand::Done(id_or_idx) => match store.set_done(&id_or_idx, true)? {
+            Some(item) => println!("Concluido: {} ({})", item.text, item.id),
+            None => return Err(format!("to-do nao encontrado: {id_or_idx}")),
+        },
+        TodoCommand::Rm(id_or_idx) => {
+            if store.remove(&id_or_idx)? {
+                println!("Removido: {id_or_idx}");
+            } else {
+                return Err(format!("to-do nao encontrado: {id_or_idx}"));
+            }
+        }
+    }
+    Ok(())
 }
 
 async fn run_hook_command(kind: HookKind) {
@@ -150,6 +298,18 @@ async fn main() {
             }
             println!("Hooks do DeskPulse removidos de {}", path.display());
         }
+        Ok(Command::Open) => {
+            if let Err(err) = run_open() {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        }
+        Ok(Command::Todo(sub)) => {
+            if let Err(err) = run_todo(sub) {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        }
         Err(err) => {
             eprintln!("{err}");
             std::process::exit(2);
@@ -182,5 +342,33 @@ mod tests {
             Command::UninstallHooks
         );
         assert!(parse_cli(["deskpulse", "unknown"]).is_err());
+    }
+
+    #[test]
+    fn test_parse_cli_todo_and_open_subcommands() {
+        assert_eq!(parse_cli(["deskpulse", "open"]).unwrap(), Command::Open);
+        assert!(parse_cli(["deskpulse", "open", "extra"]).is_err());
+
+        assert_eq!(
+            parse_cli(["deskpulse", "todo", "list"]).unwrap(),
+            Command::Todo(TodoCommand::List)
+        );
+        assert_eq!(
+            parse_cli(["deskpulse", "todo", "add", "Comprar", "cafe"]).unwrap(),
+            Command::Todo(TodoCommand::Add("Comprar cafe".to_string()))
+        );
+        assert_eq!(
+            parse_cli(["deskpulse", "todo", "done", "1"]).unwrap(),
+            Command::Todo(TodoCommand::Done("1".to_string()))
+        );
+        assert_eq!(
+            parse_cli(["deskpulse", "todo", "rm", "abc-1"]).unwrap(),
+            Command::Todo(TodoCommand::Rm("abc-1".to_string()))
+        );
+
+        assert!(parse_cli(["deskpulse", "todo"]).is_err());
+        assert!(parse_cli(["deskpulse", "todo", "add"]).is_err());
+        assert!(parse_cli(["deskpulse", "todo", "done"]).is_err());
+        assert!(parse_cli(["deskpulse", "todo", "rm"]).is_err());
     }
 }

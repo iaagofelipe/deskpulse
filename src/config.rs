@@ -1,4 +1,3 @@
-use chrono as _;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::env;
@@ -29,7 +28,6 @@ impl Default for AppConfig {
     }
 }
 
-#[allow(dead_code)]
 pub fn deskpulse_data_dir() -> PathBuf {
     let base = env::var_os("APPDATA")
         .map(PathBuf::from)
@@ -61,7 +59,6 @@ pub fn load_or_create(path: &Path) -> Result<AppConfig, String> {
     Ok(cfg)
 }
 
-#[allow(dead_code)]
 pub fn save_config(path: &Path, cfg: &AppConfig) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)

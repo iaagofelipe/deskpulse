@@ -13,7 +13,6 @@ const ICS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AgendaEvent {
     #[serde(default)]
@@ -28,7 +27,6 @@ pub struct AgendaEvent {
     pub source: String,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct AgendaSnapshot {
     pub configured: bool,
@@ -49,14 +47,12 @@ struct AgendaInner {
 
 /// Manages today's Google Calendar events from both background `.ics` polling
 /// and persistent `gcalendar` API pushes.
-#[allow(dead_code)]
 pub struct AgendaStore {
     push_path: PathBuf,
     client: reqwest::Client,
     inner: Mutex<AgendaInner>,
 }
 
-#[allow(dead_code)]
 impl AgendaStore {
     pub fn new(push_path: PathBuf, initial_ics_url: Option<String>) -> Self {
         let today = Local::now().date_naive();
@@ -216,7 +212,6 @@ impl AgendaStore {
 }
 
 /// Parses an iCalendar (`.ics`) payload and returns events occurring on `target_date`.
-#[allow(dead_code)]
 pub fn parse_ics_for_date(ics: &str, target_date: NaiveDate) -> Vec<AgendaEvent> {
     let lines = unfold_ics_lines(ics);
     let mut events = Vec::new();
@@ -392,7 +387,9 @@ fn unfold_ics_lines(ics: &str) -> Vec<String> {
     lines
 }
 
-fn parse_ics_property(line: &str) -> Option<(&str, Vec<(&str, &str)>, &str)> {
+type IcsProperty<'a> = (&'a str, Vec<(&'a str, &'a str)>, &'a str);
+
+fn parse_ics_property(line: &str) -> Option<IcsProperty<'_>> {
     let mut in_quotes = false;
     let mut colon_idx = None;
     for (idx, ch) in line.char_indices() {

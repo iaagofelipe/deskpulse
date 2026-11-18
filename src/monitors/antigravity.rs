@@ -13,7 +13,6 @@ const MAX_SESSIONS: usize = 5;
 const MAX_SESSION_AGE: Duration = Duration::from_secs(24 * 3600);
 const ACTIVE_LOCK_WINDOW: Duration = Duration::from_secs(15);
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AgentSessionSummary {
     pub id: String,
@@ -26,13 +25,11 @@ pub struct AgentSessionSummary {
     pub updated_at_ms: u64,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
 pub struct AntigravitySnapshot {
     pub sessions: Vec<AgentSessionSummary>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscriptTailInfo {
     pub step_type: String,
@@ -40,7 +37,6 @@ pub struct TranscriptTailInfo {
     pub latest_tool: Option<String>,
 }
 
-#[allow(dead_code)]
 pub fn default_antigravity_dir() -> PathBuf {
     let home = std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -56,7 +52,6 @@ fn read_capped_string(path: &Path, max_bytes: u64) -> Option<String> {
     Some(String::from_utf8_lossy(&buf).into_owned())
 }
 
-#[allow(dead_code)]
 pub fn parse_pbtxt_title(raw: &str) -> Option<String> {
     let bytes = raw.as_bytes();
     let mut i = 0usize;
@@ -105,7 +100,6 @@ pub fn parse_pbtxt_title(raw: &str) -> Option<String> {
     None
 }
 
-#[allow(dead_code)]
 pub fn parse_task_md(raw: &str) -> (usize, usize, Option<String>) {
     let mut done = 0usize;
     let mut total = 0usize;
@@ -151,7 +145,6 @@ fn extract_first_tool_name(obj: &serde_json::Map<String, serde_json::Value>) -> 
         .map(str::to_string)
 }
 
-#[allow(dead_code)]
 pub fn parse_transcript_tail(tail_bytes: &[u8]) -> Option<TranscriptTailInfo> {
     if tail_bytes.is_empty() {
         return None;
@@ -248,7 +241,6 @@ fn status_rank(status: &str) -> u8 {
     }
 }
 
-#[allow(dead_code)]
 pub fn scan_antigravity_dir(root: &Path) -> AntigravitySnapshot {
     scan_antigravity_dir_at(root, SystemTime::now())
 }
@@ -371,13 +363,11 @@ fn scan_antigravity_dir_at(root: &Path, now: SystemTime) -> AntigravitySnapshot 
     AntigravitySnapshot { sessions }
 }
 
-#[allow(dead_code)]
 pub struct AntigravityMonitor {
     latest: Arc<RwLock<AntigravitySnapshot>>,
     collector_thread: Arc<RwLock<Option<String>>>,
 }
 
-#[allow(dead_code)]
 impl AntigravityMonitor {
     pub fn spawn(shutdown: watch::Receiver<bool>) -> Self {
         Self::spawn_for_dir(default_antigravity_dir(), shutdown)
@@ -433,6 +423,7 @@ impl AntigravityMonitor {
             .unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn collector_thread_name(&self) -> Option<String> {
         self.collector_thread.read().ok().and_then(|g| g.clone())
     }

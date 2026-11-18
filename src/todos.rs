@@ -35,7 +35,6 @@ pub struct TodoStore {
     inner: Mutex<TodoInner>,
 }
 
-#[allow(dead_code)]
 impl TodoStore {
     pub fn open(path: PathBuf) -> Result<Self, String> {
         let mut inner = TodoInner::default();
