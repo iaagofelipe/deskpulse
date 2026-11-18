@@ -251,11 +251,36 @@ fn write_json_atomic(path: &Path, val: &Value) -> Result<(), String> {
     let tmp = path.with_file_name(tmp_name);
     fs::write(&tmp, pretty.as_bytes())
         .map_err(|e| format!("failed to write temp hooks file: {e}"))?;
-    if let Err(e) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(format!("failed to replace {}: {e}", path.display()));
+
+    // Retry briefly on Windows in case another process holds a transient handle on hooks.json.
+    let mut last_err = None;
+    for attempt in 0..5 {
+        match fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(e);
+                if attempt < 4 {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+            }
+        }
     }
-    Ok(())
+    let _ = fs::remove_file(&tmp);
+    Err(format!(
+        "failed to replace {}: {}",
+        path.display(),
+        last_err.expect("rename failed at least once")
+    ))
+}
+
+fn format_hook_command(exe_path: &Path, subcommand: &str) -> String {
+    let exe = exe_path.to_string_lossy();
+    // Avoid wrapping no-space paths in quotes: Antigravity's Windows hook runner escapes `"` as `\"`.
+    if exe.chars().any(char::is_whitespace) {
+        format!("\"{exe}\" {subcommand}")
+    } else {
+        format!("{exe} {subcommand}")
+    }
 }
 
 pub fn install_hooks_to(path: &Path, exe_path: &Path) -> Result<(), String> {
@@ -274,7 +299,8 @@ pub fn install_hooks_to(path: &Path, exe_path: &Path) -> Result<(), String> {
         Map::new()
     };
 
-    let exe = exe_path.to_string_lossy();
+    let pre_cmd = format_hook_command(exe_path, "hook pre-tool");
+    let stop_cmd = format_hook_command(exe_path, "hook stop");
     let entry = json!({
         "PreToolUse": [
             {
@@ -282,7 +308,7 @@ pub fn install_hooks_to(path: &Path, exe_path: &Path) -> Result<(), String> {
                 "hooks": [
                     {
                         "type": "command",
-                        "command": format!("\"{exe}\" hook pre-tool"),
+                        "command": pre_cmd,
                         "timeout": 50
                     }
                 ]
@@ -291,7 +317,7 @@ pub fn install_hooks_to(path: &Path, exe_path: &Path) -> Result<(), String> {
         "Stop": [
             {
                 "type": "command",
-                "command": format!("\"{exe}\" hook stop"),
+                "command": stop_cmd,
                 "timeout": 5
             }
         ]
@@ -516,12 +542,21 @@ mod tests {
         assert_eq!(pre["hooks"][0]["timeout"], 50);
         assert_eq!(
             pre["hooks"][0]["command"],
-            r#""D:\Projetos\deskpulse\target\release\deskpulse.exe" hook pre-tool"#
+            r"D:\Projetos\deskpulse\target\release\deskpulse.exe hook pre-tool"
         );
         assert_eq!(dp["Stop"][0]["timeout"], 5);
         assert_eq!(
             dp["Stop"][0]["command"],
-            r#""D:\Projetos\deskpulse\target\release\deskpulse.exe" hook stop"#
+            r"D:\Projetos\deskpulse\target\release\deskpulse.exe hook stop"
+        );
+
+        let spaced_exe = Path::new(r"C:\Program Files\DeskPulse\deskpulse.exe");
+        install_hooks_to(&hooks_path, spaced_exe).expect("install_hooks_to spaced");
+        let spaced_installed: Value =
+            serde_json::from_str(&fs::read_to_string(&hooks_path).unwrap()).unwrap();
+        assert_eq!(
+            spaced_installed["deskpulse"]["PreToolUse"][0]["hooks"][0]["command"],
+            r#""C:\Program Files\DeskPulse\deskpulse.exe" hook pre-tool"#
         );
 
         uninstall_hooks_from(&hooks_path).expect("uninstall_hooks_from");
