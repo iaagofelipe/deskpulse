@@ -6,12 +6,29 @@ use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::watch;
 
-const TRANSCRIPT_TAIL_BYTES: u64 = 16_384;
+const TRANSCRIPT_TAIL_BYTES: u64 = 65_536;
 const TASK_MD_MAX_BYTES: u64 = 65_536;
 const PBTXT_MAX_BYTES: u64 = 16_384;
 const MAX_SESSIONS: usize = 5;
 const MAX_SESSION_AGE: Duration = Duration::from_secs(24 * 3600);
 const ACTIVE_LOCK_WINDOW: Duration = Duration::from_secs(15);
+const WAITING_LOCK_WINDOW: Duration = Duration::from_secs(300);
+const MAX_RECENT_ACTIONS: usize = 6;
+const MAX_TASK_ITEMS: usize = 12;
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentTaskItem {
+    pub text: String,
+    pub state: String,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct AgentActionItem {
+    pub tool: String,
+    pub detail: String,
+    pub step_index: Option<u64>,
+    pub at_ms: Option<u64>,
+}
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct AgentSessionSummary {
@@ -20,6 +37,13 @@ pub struct AgentSessionSummary {
     pub status: String,
     pub current_step: String,
     pub current_tool: Option<String>,
+    pub current_detail: Option<String>,
+    pub thinking_title: Option<String>,
+    pub last_prompt: Option<String>,
+    pub step_index: Option<u64>,
+    pub context_tokens: Option<u64>,
+    pub tasks: Vec<AgentTaskItem>,
+    pub recent_actions: Vec<AgentActionItem>,
     pub task_done: usize,
     pub task_total: usize,
     pub updated_at_ms: u64,
@@ -35,6 +59,12 @@ pub struct TranscriptTailInfo {
     pub step_type: String,
     pub status: String,
     pub latest_tool: Option<String>,
+    pub latest_detail: Option<String>,
+    pub thinking_title: Option<String>,
+    pub last_prompt: Option<String>,
+    pub step_index: Option<u64>,
+    pub context_tokens: Option<u64>,
+    pub recent_actions: Vec<AgentActionItem>,
 }
 
 pub fn default_antigravity_dir() -> PathBuf {
@@ -100,10 +130,11 @@ pub fn parse_pbtxt_title(raw: &str) -> Option<String> {
     None
 }
 
-pub fn parse_task_md(raw: &str) -> (usize, usize, Option<String>) {
+pub fn parse_task_md_detailed(raw: &str) -> (usize, usize, Option<String>, Vec<AgentTaskItem>) {
     let mut done = 0usize;
     let mut total = 0usize;
     let mut active_item: Option<String> = None;
+    let mut items = Vec::new();
 
     for line in raw.lines() {
         let trimmed = line.trim_start();
@@ -115,34 +146,138 @@ pub fn parse_task_md(raw: &str) -> (usize, usize, Option<String>) {
             continue;
         };
 
-        if after_bullet.starts_with("[x]") || after_bullet.starts_with("[X]") {
+        let (state, text_rest) = if let Some(rest) = after_bullet
+            .strip_prefix("[x]")
+            .or_else(|| after_bullet.strip_prefix("[X]"))
+        {
             done += 1;
             total += 1;
+            ("done", rest.trim())
         } else if let Some(rest) = after_bullet.strip_prefix("[/]") {
             total += 1;
-            if active_item.is_none() {
-                let item = rest.trim();
-                if !item.is_empty() {
-                    active_item = Some(item.to_string());
-                }
+            let item = rest.trim();
+            if active_item.is_none() && !item.is_empty() {
+                active_item = Some(item.to_string());
             }
-        } else if after_bullet.starts_with("[ ]") {
+            ("active", item)
+        } else if let Some(rest) = after_bullet.strip_prefix("[ ]") {
             total += 1;
+            ("todo", rest.trim())
+        } else {
+            continue;
+        };
+
+        if !text_rest.is_empty() && items.len() < MAX_TASK_ITEMS {
+            items.push(AgentTaskItem {
+                text: truncate_text(text_rest, 90),
+                state: state.to_string(),
+            });
         }
     }
 
-    (done, total, active_item)
+    (done, total, active_item, items)
 }
 
-fn extract_first_tool_name(obj: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
-    obj.get("tool_calls")?
-        .as_array()?
-        .first()?
-        .get("name")?
-        .as_str()
-        .map(str::trim)
+fn truncate_text(s: &str, max: usize) -> String {
+    let compact: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() <= max {
+        return compact;
+    }
+    let mut out: String = compact.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+fn clean_arg_str(raw: &str) -> String {
+    let mut s = raw.trim();
+    if s.len() >= 2 && s.starts_with('"') && s.ends_with('"') {
+        s = &s[1..s.len() - 1];
+    }
+    s.replace("\\\"", "\"").trim().to_string()
+}
+
+fn arg_str(args: &serde_json::Value, key: &str) -> Option<String> {
+    let raw = args.get(key)?.as_str()?;
+    let cleaned = clean_arg_str(raw);
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn basename_or_path(raw: &str) -> String {
+    Path::new(raw)
+        .file_name()
+        .and_then(|s| s.to_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+        .unwrap_or_else(|| raw.to_string())
+}
+
+fn format_tool_detail(tool_name: &str, call: &serde_json::Value) -> Option<String> {
+    let args = call.get("args").or_else(|| call.get("arguments"))?;
+    if let Some(summary) = arg_str(args, "toolSummary") {
+        return Some(truncate_text(&summary, 85));
+    }
+    if tool_name == "invoke_subagent" {
+        if let Some(role) = arg_str(args, "Role") {
+            let model = arg_str(args, "Model")
+                .filter(|m| m != "inherit")
+                .map(|m| format!(" ({m})"))
+                .unwrap_or_default();
+            return Some(truncate_text(&format!("Subagente: {role}{model}"), 85));
+        }
+    }
+    for key in ["Path", "TargetFile", "path"] {
+        if let Some(p) = arg_str(args, key) {
+            return Some(truncate_text(&basename_or_path(&p), 85));
+        }
+    }
+    for key in ["CommandLine", "command", "Query", "query"] {
+        if let Some(cmd) = arg_str(args, key) {
+            return Some(truncate_text(&cmd, 85));
+        }
+    }
+    if let Some(prompt) = arg_str(args, "Prompt").or_else(|| arg_str(args, "Description")) {
+        return Some(truncate_text(&prompt, 85));
+    }
+    None
+}
+
+fn extract_thinking_title(obj: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    let thinking = obj.get("thinking")?.as_str()?;
+    for line in thinking.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let stripped = trimmed
+            .trim_start_matches('#')
+            .trim()
+            .trim_matches('*')
+            .trim();
+        if !stripped.is_empty() {
+            return Some(truncate_text(stripped, 75));
+        }
+    }
+    None
+}
+
+fn extract_context_tokens(obj: &serde_json::Map<String, serde_json::Value>) -> Option<u64> {
+    let input = obj.get("input_tokens").and_then(|v| v.as_u64());
+    let cache = obj.get("cache_read_tokens").and_then(|v| v.as_u64());
+    match (input, cache) {
+        (None, None) => None,
+        _ => Some(input.unwrap_or(0) + cache.unwrap_or(0)),
+    }
+}
+
+fn parse_created_at_ms(obj: &serde_json::Map<String, serde_json::Value>) -> Option<u64> {
+    let s = obj.get("created_at")?.as_str()?;
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp_millis().max(0) as u64)
 }
 
 pub fn parse_transcript_tail(tail_bytes: &[u8]) -> Option<TranscriptTailInfo> {
@@ -154,6 +289,12 @@ pub fn parse_transcript_tail(tail_bytes: &[u8]) -> Option<TranscriptTailInfo> {
     let mut step_type: Option<String> = None;
     let mut status: Option<String> = None;
     let mut latest_tool: Option<String> = None;
+    let mut latest_detail: Option<String> = None;
+    let mut thinking_title: Option<String> = None;
+    let mut last_prompt: Option<String> = None;
+    let mut step_index: Option<u64> = None;
+    let mut context_tokens: Option<u64> = None;
+    let mut recent_actions: Vec<AgentActionItem> = Vec::new();
 
     for line in text.lines().rev() {
         let trimmed = line.trim();
@@ -175,20 +316,57 @@ pub fn parse_transcript_tail(tail_bytes: &[u8]) -> Option<TranscriptTailInfo> {
             continue;
         }
 
+        let entry_step = obj.get("step_index").and_then(|v| v.as_u64());
+        let entry_at_ms = parse_created_at_ms(&obj);
+
         if step_type.is_none() {
             step_type = Some(entry_type.clone().unwrap_or_else(|| "UNKNOWN".to_string()));
             status = Some(entry_status.unwrap_or_else(|| "UNKNOWN".to_string()));
-            latest_tool = extract_first_tool_name(&obj);
-            if latest_tool.is_some() || step_type.as_deref() == Some("USER_INPUT") {
-                break;
+            step_index = entry_step;
+        }
+
+        if context_tokens.is_none() {
+            context_tokens = extract_context_tokens(&obj);
+        }
+        if thinking_title.is_none() {
+            thinking_title = extract_thinking_title(&obj);
+        }
+
+        if entry_type.as_deref() == Some("USER_INPUT") && last_prompt.is_none() {
+            if let Some(content) = obj.get("content").and_then(|v| v.as_str()) {
+                let first_line = content
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty() && !l.starts_with('<'));
+                if let Some(p) = first_line {
+                    last_prompt = Some(truncate_text(p, 140));
+                }
             }
-        } else {
-            if entry_type.as_deref() == Some("USER_INPUT") {
-                break;
-            }
-            if let Some(tool) = extract_first_tool_name(&obj) {
-                latest_tool = Some(tool);
-                break;
+        }
+
+        if let Some(calls) = obj.get("tool_calls").and_then(|v| v.as_array()) {
+            for call in calls.iter().rev() {
+                let Some(name) = call
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                else {
+                    continue;
+                };
+                let detail = format_tool_detail(name, call);
+                if latest_tool.is_none() {
+                    latest_tool = Some(name.to_string());
+                    latest_detail = detail.clone();
+                }
+                if recent_actions.len() < MAX_RECENT_ACTIONS {
+                    recent_actions.push(AgentActionItem {
+                        tool: name.to_string(),
+                        detail: detail.unwrap_or_else(|| name.to_string()),
+                        step_index: entry_step,
+                        at_ms: entry_at_ms,
+                    });
+                }
             }
         }
     }
@@ -197,6 +375,12 @@ pub fn parse_transcript_tail(tail_bytes: &[u8]) -> Option<TranscriptTailInfo> {
         step_type: step_type?,
         status: status?,
         latest_tool,
+        latest_detail,
+        thinking_title,
+        last_prompt,
+        step_index,
+        context_tokens,
+        recent_actions,
     })
 }
 
@@ -307,10 +491,10 @@ fn scan_antigravity_dir_at(root: &Path, now: SystemTime) -> AntigravitySnapshot 
         .and_then(|raw| parse_pbtxt_title(&raw))
         .unwrap_or_else(|| cand.id.clone());
 
-        let (task_done, task_total, active_item) =
+        let (task_done, task_total, active_item, tasks) =
             read_capped_string(&cand.brain_dir.join("task.md"), TASK_MD_MAX_BYTES)
-                .map(|raw| parse_task_md(&raw))
-                .unwrap_or((0, 0, None));
+                .map(|raw| parse_task_md_detailed(&raw))
+                .unwrap_or((0, 0, None, Vec::new()));
 
         let tail = cand.tx_path.as_deref().and_then(read_transcript_tail);
         let last_status = tail.as_ref().map(|t| t.status.as_str()).unwrap_or("");
@@ -320,18 +504,39 @@ fn scan_antigravity_dir_at(root: &Path, now: SystemTime) -> AntigravitySnapshot 
                 || cand.age <= ACTIVE_LOCK_WINDOW
             {
                 "running"
-            } else {
+            } else if cand.age <= WAITING_LOCK_WINDOW {
                 "waiting"
+            } else {
+                "idle"
             }
         } else {
             "idle"
         }
         .to_string();
 
+        let thinking_title = tail.as_ref().and_then(|t| t.thinking_title.clone());
+        let current_detail = tail.as_ref().and_then(|t| t.latest_detail.clone());
+        let friendly_step = tail.as_ref().map(|t| match t.step_type.as_str() {
+            "USER_INPUT" => "Prompt enviado".to_string(),
+            "PLANNER_RESPONSE" => "Processando".to_string(),
+            "GENERIC" => "Executando ferramenta".to_string(),
+            other => other.to_string(),
+        });
         let current_step = active_item
-            .or_else(|| tail.as_ref().map(|t| t.step_type.clone()))
+            .or_else(|| thinking_title.clone())
+            .or_else(|| current_detail.clone())
+            .or(friendly_step)
             .unwrap_or_default();
-        let current_tool = tail.and_then(|t| t.latest_tool);
+        let (current_tool, last_prompt, step_index, context_tokens, recent_actions) = match tail {
+            Some(t) => (
+                t.latest_tool,
+                t.last_prompt,
+                t.step_index,
+                t.context_tokens,
+                t.recent_actions,
+            ),
+            None => (None, None, None, None, Vec::new()),
+        };
         let updated_at_ms = cand
             .mtime
             .duration_since(UNIX_EPOCH)
@@ -344,6 +549,13 @@ fn scan_antigravity_dir_at(root: &Path, now: SystemTime) -> AntigravitySnapshot 
             status,
             current_step,
             current_tool,
+            current_detail,
+            thinking_title,
+            last_prompt,
+            step_index,
+            context_tokens,
+            tasks,
+            recent_actions,
             task_done,
             task_total,
             updated_at_ms,
@@ -452,11 +664,10 @@ mod tests {
 - [/] Implement Antigravity monitor
 - [ ] Wire server endpoints
 ";
-        assert_eq!(
-            parse_task_md(task_md),
-            (2, 4, Some("Implement Antigravity monitor".to_string()))
-        );
-        assert_eq!(parse_task_md("no checkboxes here"), (0, 0, None));
+        let (done, total, active, items) = parse_task_md_detailed(task_md);
+        assert_eq!((done, total, active.as_deref()), (2, 4, Some("Implement Antigravity monitor")));
+        assert_eq!(items.len(), 4);
+        assert_eq!(parse_task_md_detailed("no checkboxes here"), (0, 0, None, Vec::new()));
     }
 
     #[test]
@@ -479,6 +690,24 @@ mod tests {
         assert_eq!(info.step_type, "PLANNER_RESPONSE");
         assert_eq!(info.status, "RUNNING");
         assert_eq!(info.latest_tool.as_deref(), Some("run_command"));
+        assert_eq!(info.latest_detail.as_deref(), Some("cargo test"));
+        assert_eq!(info.recent_actions.len(), 2);
+
+        // Rich metadata extraction: toolSummary, thinking headline, prompt, tokens, subagent
+        let rich_tail = concat!(
+            r#"{"step_index":10,"type":"USER_INPUT","status":"DONE","content":"<USER_REQUEST>\nFix UI layout\n</USER_REQUEST>"}"#,
+            "\n",
+            r#"{"step_index":11,"type":"PLANNER_RESPONSE","status":"DONE","created_at":"2026-11-18T17:45:37Z","input_tokens":1000,"cache_read_tokens":4000,"thinking":"**Inspecting Layout**\nLooking into CSS.","tool_calls":[{"name":"invoke_subagent","args":{"Role":"\"UI Reviewer\"","Model":"pro"}},{"name":"read_file","args":{"Path":"\"D:\\\\App\\\\index.html\""}}]}"#,
+            "\n"
+        );
+        let rich = parse_transcript_tail(rich_tail.as_bytes()).expect("rich tail");
+        assert_eq!(rich.thinking_title.as_deref(), Some("Inspecting Layout"));
+        assert_eq!(rich.last_prompt.as_deref(), Some("Fix UI layout"));
+        assert_eq!(rich.context_tokens, Some(5000));
+        assert_eq!(rich.step_index, Some(11));
+        assert_eq!(rich.latest_tool.as_deref(), Some("read_file"));
+        assert_eq!(rich.latest_detail.as_deref(), Some("index.html"));
+        assert_eq!(rich.recent_actions[1].detail, "Subagente: UI Reviewer (pro)");
 
         // When last line is GENERIC after a tool_call, still extracts latest tool_calls[0].name
         let multi_tail = concat!(
@@ -522,7 +751,7 @@ mod tests {
         .unwrap();
 
         let mut big_transcript = String::new();
-        for i in 0..300 {
+        for i in 0..700 {
             big_transcript.push_str(&format!(
                 r#"{{"step_index":{i},"type":"GENERIC","status":"DONE","content":"padding-line-0123456789abcdef0123456789abcdef"}}"#
             ));
@@ -603,8 +832,26 @@ mod tests {
             .set_modified(old_25h)
             .unwrap();
 
+        // Session E: stale lock (>300s old, DONE) should settle as idle instead of waiting
+        let brain_e = root.join("brain").join("sess-e");
+        fs::create_dir_all(&brain_e).unwrap();
+        fs::write(root.join("presence").join("sess-e.lock"), "").unwrap();
+        let tx_e_path = brain_e.join("transcript.jsonl");
+        fs::write(
+            &tx_e_path,
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE"}"#,
+        )
+        .unwrap();
+        let old_600s = SystemTime::now() - Duration::from_secs(600);
+        fs::File::options()
+            .write(true)
+            .open(&tx_e_path)
+            .unwrap()
+            .set_modified(old_600s)
+            .unwrap();
+
         let snap = scan_antigravity_dir(&root);
-        assert_eq!(snap.sessions.len(), 3);
+        assert_eq!(snap.sessions.len(), 4);
         assert_eq!(snap.sessions[0].id, "sess-a");
         assert_eq!(snap.sessions[0].title, "Active Hub Task");
         assert_eq!(snap.sessions[0].status, "running");
@@ -618,6 +865,8 @@ mod tests {
 
         assert_eq!(snap.sessions[2].id, "sess-c");
         assert_eq!(snap.sessions[2].status, "idle");
+        assert_eq!(snap.sessions[3].id, "sess-e");
+        assert_eq!(snap.sessions[3].status, "idle");
     }
 
     #[test]
