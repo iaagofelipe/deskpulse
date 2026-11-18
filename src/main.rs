@@ -4,8 +4,24 @@ mod events;
 mod hooks;
 mod monitors;
 mod security;
+mod server;
 
 use std::env;
+use std::io::Read;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::watch;
+
+use crate::approvals::ApprovalStore;
+use crate::events::EventBus;
+use crate::hooks::{
+    default_hooks_path, install_hooks_to, run_hook_cli, uninstall_hooks_from, HookKind,
+};
+use crate::monitors::adb::AdbBridge;
+use crate::monitors::media::WindowsMediaBackend;
+use crate::monitors::system::SystemMonitor;
+use crate::server::{build_router, AppState};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Command {
@@ -35,11 +51,103 @@ where
     }
 }
 
+async fn run_serve() -> Result<(), String> {
+    let cfg_path = config::default_config_path();
+    let cfg = config::load_or_create(&cfg_path)?;
+
+    let addr: SocketAddr = ([127, 0, 0, 1], cfg.port).into();
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| format!("failed to bind {addr}: {e}"))?;
+
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+    let events = Arc::new(EventBus::new());
+    let approvals = Arc::new(ApprovalStore::new(
+        Arc::clone(&events),
+        Duration::from_secs(cfg.approval_timeout_secs),
+    ));
+    let system = Arc::new(SystemMonitor::spawn(shutdown_rx.clone()));
+    let adb = Arc::new(AdbBridge::spawn(cfg.port, shutdown_rx));
+    let media = Arc::new(WindowsMediaBackend::new());
+
+    let app = build_router(AppState {
+        token: cfg.token.clone(),
+        port: cfg.port,
+        events,
+        approvals,
+        system,
+        adb,
+        media,
+    });
+
+    println!("DeskPulse rodando em http://127.0.0.1:{}/#token={}", cfg.port, cfg.token);
+    println!("Config: {}", cfg_path.display());
+    println!("Plugue o celular Android via USB (Depuracao USB ativa) e abra http://127.0.0.1:{}/#token={}", cfg.port, cfg.token);
+
+    let result = axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
+        .map_err(|e| format!("server error: {e}"));
+
+    let _ = shutdown_tx.send(true);
+    result
+}
+
+async fn run_hook_command(kind: HookKind) {
+    let fallback = match kind {
+        HookKind::PreTool => r#"{"decision":"ask"}"#.to_string(),
+        HookKind::Stop => "{}".to_string(),
+    };
+
+    let mut stdin_text = String::new();
+    if std::io::stdin().read_to_string(&mut stdin_text).is_err() {
+        println!("{fallback}");
+        return;
+    }
+
+    let Ok(cfg) = config::load_or_create(&config::default_config_path()) else {
+        println!("{fallback}");
+        return;
+    };
+
+    let base_url = format!("http://127.0.0.1:{}", cfg.port);
+    let out = run_hook_cli(kind, &stdin_text, &base_url, &cfg.token).await;
+    println!("{out}");
+}
+
 #[tokio::main]
 async fn main() {
     match parse_cli(env::args()) {
-        Ok(Command::Serve) => println!("deskpulse serve stub"),
-        Ok(cmd) => println!("{cmd:?}"),
+        Ok(Command::Serve) => {
+            if let Err(err) = run_serve().await {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        }
+        Ok(Command::HookPreTool) => run_hook_command(HookKind::PreTool).await,
+        Ok(Command::HookStop) => run_hook_command(HookKind::Stop).await,
+        Ok(Command::InstallHooks) => {
+            let exe = env::current_exe().unwrap_or_else(|e| {
+                eprintln!("failed to resolve current executable: {e}");
+                std::process::exit(1);
+            });
+            let path = default_hooks_path();
+            if let Err(err) = install_hooks_to(&path, &exe) {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+            println!("Hooks do DeskPulse instalados em {}", path.display());
+        }
+        Ok(Command::UninstallHooks) => {
+            let path = default_hooks_path();
+            if let Err(err) = uninstall_hooks_from(&path) {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+            println!("Hooks do DeskPulse removidos de {}", path.display());
+        }
         Err(err) => {
             eprintln!("{err}");
             std::process::exit(2);

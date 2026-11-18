@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f17" />
+  <title>DeskPulse</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --surface: #131a26;
+      --surface-2: #1b2434;
+      --border: #273247;
+      --text: #eef3fb;
+      --muted: #93a1b8;
+      --accent: #4f9cff;
+      --green: #27c281;
+      --red: #f05a67;
+      --amber: #f5b942;
+      --radius: 16px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: radial-gradient(circle at top, #131d30 0%, var(--bg) 55%);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 14px 14px 36px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .wrap {
+      max-width: 560px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 6px 2px;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.15rem;
+      letter-spacing: 0.2px;
+    }
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--amber);
+      box-shadow: 0 0 10px var(--amber);
+    }
+    .dot.ok { background: var(--green); box-shadow: 0 0 10px var(--green); }
+    .dot.err { background: var(--red); box-shadow: 0 0 10px var(--red); }
+    .pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .pill {
+      font-size: 0.74rem;
+      font-weight: 600;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      cursor: pointer;
+    }
+    .pill.on {
+      color: var(--text);
+      border-color: rgba(79, 156, 255, 0.55);
+      background: rgba(79, 156, 255, 0.14);
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+    }
+    .card-title {
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin: 0 0 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .hidden { display: none !important; }
+
+    /* Approvals */
+    .approval-card {
+      border-color: rgba(245, 185, 66, 0.75);
+      background: linear-gradient(180deg, rgba(245, 185, 66, 0.09), var(--surface) 45%);
+    }
+    .approval-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 3px 9px;
+      border-radius: 6px;
+      background: rgba(79, 156, 255, 0.18);
+      color: #8cc0ff;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .countdown-text {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: var(--amber);
+      font-variant-numeric: tabular-nums;
+    }
+    .approval-title {
+      font-size: 1rem;
+      font-weight: 700;
+      margin: 0 0 8px;
+    }
+    .code-box {
+      background: #090d14;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.82rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 150px;
+      overflow-y: auto;
+      color: #dce7f8;
+      margin-bottom: 8px;
+    }
+    .cwd-line {
+      font-size: 0.75rem;
+      color: var(--muted);
+      word-break: break-all;
+      margin-bottom: 10px;
+    }
+    .progress-track {
+      height: 5px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--amber), var(--accent));
+      transition: width 0.25s linear;
+    }
+    .btn-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .btn-row-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .btn-row-3 .btn-pc {
+      grid-column: 1 / -1;
+    }
+    button {
+      font: inherit;
+      font-weight: 700;
+      border: 1px solid var(--border);
+      background: var(--surface-2);
+      color: var(--text);
+      padding: 12px 14px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: transform 0.08s ease, opacity 0.15s ease;
+    }
+    button:active { transform: scale(0.97); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-allow { background: rgba(39, 194, 129, 0.2); border-color: rgba(39, 194, 129, 0.6); color: #7ef0bf; }
+    .btn-deny { background: rgba(240, 90, 103, 0.2); border-color: rgba(240, 90, 103, 0.6); color: #ff9ba4; }
+    .btn-pc { background: rgba(147, 161, 184, 0.12); color: var(--muted); font-size: 0.88rem; }
+
+    /* Media */
+    .media-top {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .art {
+      width: 62px;
+      height: 62px;
+      border-radius: 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      object-fit: cover;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 1.5rem;
+    }
+    .media-meta { min-width: 0; flex: 1; }
+    .media-title {
+      font-weight: 700;
+      font-size: 1rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .media-artist {
+      font-size: 0.86rem;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 2px;
+    }
+    .media-app {
+      font-size: 0.74rem;
+      color: var(--accent);
+      margin-top: 4px;
+    }
+    .media-controls {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .vol-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .vol-row input[type="range"] {
+      flex: 1;
+      accent-color: var(--accent);
+      height: 28px;
+    }
+    .vol-pct {
+      min-width: 40px;
+      text-align: right;
+      font-size: 0.85rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+    }
+
+    /* Telemetry */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    .stat {
+      background: var(--surface-2);
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .stat-label { font-size: 0.74rem; color: var(--muted); margin-bottom: 4px; }
+    .stat-val { font-size: 1.1rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .stat-sub { font-size: 0.74rem; color: var(--muted); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .disk-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+    .disk-item { font-size: 0.78rem; color: var(--muted); display: flex; justify-content: space-between; }
+
+    /* Notifications */
+    .feed { display: flex; flex-direction: column; gap: 8px; }
+    .feed-item {
+      background: var(--surface-2);
+      border-left: 3px solid var(--accent);
+      border-radius: 10px;
+      padding: 10px 12px;
+    }
+    .feed-item.success { border-left-color: var(--green); }
+    .feed-item.error { border-left-color: var(--red); }
+    .feed-item.warn { border-left-color: var(--amber); }
+    .feed-head { display: flex; justify-content: space-between; gap: 8px; font-size: 0.86rem; font-weight: 700; margin-bottom: 3px; }
+    .feed-time { font-size: 0.72rem; color: var(--muted); font-weight: 500; }
+    .feed-body { font-size: 0.82rem; color: var(--muted); word-break: break-word; }
+
+    /* Token Gate */
+    .token-input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #090d14;
+      color: var(--text);
+      font-family: ui-monospace, monospace;
+      margin: 10px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <span id="connDot" class="dot"></span>
+        <span>DeskPulse</span>
+      </div>
+      <div class="pills">
+        <span id="connPill" class="pill">Conectando...</span>
+        <span id="adbPill" class="pill">USB: --</span>
+        <button id="wakeBtn" type="button" class="pill">Tela: --</button>
+        <button id="soundBtn" type="button" class="pill on">Som: ON</button>
+        <button id="tokenResetBtn" type="button" class="pill">Token</button>
+      </div>
+    </header>
+
+    <section id="tokenCard" class="card hidden">
+      <div class="card-title">Autenticação</div>
+      <div style="font-size:0.9rem;color:var(--muted);">
+        Cole o token exibido no terminal do PC (ou abra usando o link completo com <code>#token=...</code>):
+      </div>
+      <input id="tokenInput" class="token-input" type="password" placeholder="64 caracteres hexadecimais" />
+      <button id="saveTokenBtn" type="button" class="btn-allow" style="width:100%;">Conectar</button>
+    </section>
+
+    <div id="approvalsMount" class="feed"></div>
+
+    <section class="card">
+      <div class="card-title">
+        <span>Mídia &amp; Áudio</span>
+        <span id="mediaStatus">Idle</span>
+      </div>
+      <div class="media-top">
+        <img id="mediaArtImg" class="art hidden" alt="Capa" />
+        <div id="mediaArtFallback" class="art">&#9835;</div>
+        <div class="media-meta">
+          <div id="mediaTitle" class="media-title">Nada reproduzindo</div>
+          <div id="mediaArtist" class="media-artist">-</div>
+          <div id="mediaApp" class="media-app"></div>
+        </div>
+      </div>
+      <div class="media-controls">
+        <button type="button" data-media="prev">&#9198; Ant</button>
+        <button type="button" id="playPauseBtn" data-media="play-pause">&#9199; Play</button>
+        <button type="button" data-media="next">Prox &#9197;</button>
+      </div>
+      <div class="vol-row">
+        <button type="button" id="muteBtn" data-media="toggle-mute" style="padding:8px 12px;">Mutar</button>
+        <input id="volSlider" type="range" min="0" max="100" value="50" aria-label="Volume" />
+        <span id="volPct" class="vol-pct">50%</span>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">
+        <span>Saúde do PC</span>
+        <span id="uptimeLabel">--</span>
+      </div>
+      <div class="stats-grid">
+        <div class="stat">
+          <div class="stat-label">CPU</div>
+          <div id="cpuVal" class="stat-val">--%</div>
+          <div id="cpuName" class="stat-sub">--</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Memória RAM</div>
+          <div id="ramVal" class="stat-val">--</div>
+          <div id="ramSub" class="stat-sub">--</div>
+        </div>
+        <div class="stat" id="gpuStat">
+          <div class="stat-label">GPU</div>
+          <div id="gpuVal" class="stat-val">--</div>
+          <div id="gpuSub" class="stat-sub">Sem NVIDIA detectada</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Rede</div>
+          <div id="netVal" class="stat-val">--</div>
+          <div id="netSub" class="stat-sub">--</div>
+        </div>
+      </div>
+      <div id="diskList" class="disk-list"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">Notificações do Antigravity</div>
+      <div id="notifyFeed" class="feed">
+        <div class="feed-body">Nenhuma notificação recente.</div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (() => {
+      const TOKEN_KEY = "deskpulse_token";
+      let token = "";
+      let soundEnabled = true;
+      let wakeLock = null;
+      let streamAbort = null;
+      let volTimer = null;
+      let currentApprovals = new Map();
+      let currentNotifications = [];
+      let audioCtx = null;
+
+      const el = (id) => document.getElementById(id);
+
+      function loadToken() {
+        const hash = window.location.hash || "";
+        const m = hash.match(/token=([a-zA-Z0-9_-]+)/);
+        if (m && m[1]) {
+          localStorage.setItem(TOKEN_KEY, m[1]);
+          history.replaceState(null, "", "/");
+          return m[1];
+        }
+        return localStorage.getItem(TOKEN_KEY) || "";
+      }
+
+      function setConn(state, label) {
+        const dot = el("connDot");
+        dot.classList.remove("ok", "err");
+        if (state === "ok") dot.classList.add("ok");
+        if (state === "err") dot.classList.add("err");
+        el("connPill").textContent = label;
+      }
+
+      async function requestWakeLock() {
+        const btn = el("wakeBtn");
+        if (!("wakeLock" in navigator)) {
+          btn.textContent = "Tela: N/D";
+          return;
+        }
+        try {
+          wakeLock = await navigator.wakeLock.request("screen");
+          btn.textContent = "Tela: Ativa";
+          btn.classList.add("on");
+          wakeLock.addEventListener("release", () => {
+            btn.textContent = "Tela: Inativa";
+            btn.classList.remove("on");
+          });
+        } catch {
+          btn.textContent = "Tela: Toque";
+          btn.classList.remove("on");
+        }
+      }
+
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "visible" && token) {
+          requestWakeLock();
+        }
+      });
+
+      function alertUser(isApproval) {
+        if (navigator.vibrate) {
+          navigator.vibrate(isApproval ? [140, 70, 140] : [90]);
+        }
+        if (!soundEnabled) return;
+        try {
+          const Ctx = window.AudioContext || window.webkitAudioContext;
+          if (!Ctx) return;
+          if (!audioCtx) audioCtx = new Ctx();
+          if (audioCtx.state === "suspended") audioCtx.resume();
+          const now = audioCtx.currentTime;
+          const freqs = isApproval ? [660, 880] : [523];
+          freqs.forEach((f, idx) => {
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = "sine";
+            osc.frequency.setValueAtTime(f, now + idx * 0.11);
+            gain.gain.setValueAtTime(0.001, now + idx * 0.11);
+            gain.gain.exponentialRampToValueAtTime(0.16, now + idx * 0.11 + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.11 + 0.18);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start(now + idx * 0.11);
+            osc.stop(now + idx * 0.11 + 0.2);
+          });
+        } catch {}
+      }
+
+      function fmtRate(bps) {
+        if (bps >= 1024 * 1024) return (bps / (1024 * 1024)).toFixed(1) + " MB/s";
+        if (bps >= 1024) return (bps / 1024).toFixed(0) + " KB/s";
+        return bps + " B/s";
+      }
+
+      function fmtUptime(sec) {
+        const h = Math.floor(sec / 3600);
+        const m = Math.floor((sec % 3600) / 60);
+        return h > 0 ? `${h}h ${m}m` : `${m}m`;
+      }
+
+      async function apiPost(path, bodyObj) {
+        const opts = {
+          method: "POST",
+          headers: { "X-DeskPulse-Token": token },
+        };
+        if (bodyObj !== undefined) {
+          opts.headers["Content-Type"] = "application/json";
+          opts.body = JSON.stringify(bodyObj);
+        }
+        const res = await fetch(path, opts);
+        if (res.status === 401) {
+          showTokenGate();
+          throw new Error("unauthorized");
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }
+
+      function renderApprovals() {
+        const mount = el("approvalsMount");
+        mount.replaceChildren();
+        const items = Array.from(currentApprovals.values()).sort((a, b) => a.created_at_ms - b.created_at_ms);
+        const now = Date.now();
+        for (const req of items) {
+          const card = document.createElement("section");
+          card.className = "card approval-card";
+
+          const head = document.createElement("div");
+          head.className = "approval-head";
+          const badge = document.createElement("span");
+          badge.className = "badge";
+          badge.textContent = req.tool_name;
+          const timer = document.createElement("span");
+          timer.className = "countdown-text";
+          const totalMs = Math.max(1000, req.expires_at_ms - req.created_at_ms);
+          const remMs = Math.max(0, req.expires_at_ms - now);
+          timer.textContent = `${Math.ceil(remMs / 1000)}s`;
+          head.append(badge, timer);
+
+          const title = document.createElement("div");
+          title.className = "approval-title";
+          title.textContent = req.title;
+
+          const code = document.createElement("div");
+          code.className = "code-box";
+          code.textContent = req.summary;
+
+          const cwd = document.createElement("div");
+          cwd.className = "cwd-line";
+          cwd.textContent = req.cwd ? `Pasta: ${req.cwd}` : "";
+
+          const track = document.createElement("div");
+          track.className = "progress-track";
+          const fill = document.createElement("div");
+          fill.className = "progress-fill";
+          fill.style.width = `${Math.max(0, Math.min(100, (remMs / totalMs) * 100))}%`;
+          track.appendChild(fill);
+
+          const btns = document.createElement("div");
+          btns.className = "btn-row-3";
+
+          const decide = async (decision) => {
+            btns.querySelectorAll("button").forEach((b) => (b.disabled = true));
+            try {
+              await apiPost(`/api/approvals/${encodeURIComponent(req.id)}`, { decision });
+              currentApprovals.delete(req.id);
+              renderApprovals();
+            } catch {
+              btns.querySelectorAll("button").forEach((b) => (b.disabled = false));
+            }
+          };
+
+          const bAllow = document.createElement("button");
+          bAllow.type = "button";
+          bAllow.className = "btn-allow";
+          bAllow.textContent = "Aprovar";
+          bAllow.onclick = () => decide("allow");
+
+          const bDeny = document.createElement("button");
+          bDeny.type = "button";
+          bDeny.className = "btn-deny";
+          bDeny.textContent = "Negar";
+          bDeny.onclick = () => decide("deny");
+
+          const bAsk = document.createElement("button");
+          bAsk.type = "button";
+          bAsk.className = "btn-pc";
+          bAsk.textContent = "Responder no PC";
+          bAsk.onclick = () => decide("ask");
+
+          btns.append(bAllow, bDeny, bAsk);
+          card.append(head, title, code);
+          if (req.cwd) card.appendChild(cwd);
+          card.append(track, btns);
+          mount.appendChild(card);
+        }
+      }
+
+      setInterval(() => {
+        if (currentApprovals.size > 0) renderApprovals();
+      }, 400);
+
+      function renderMedia(m) {
+        if (!m) return;
+        el("mediaStatus").textContent = m.status || "Idle";
+        el("mediaTitle").textContent = m.title || "Nada reproduzindo";
+        el("mediaArtist").textContent = m.artist || "-";
+        el("mediaApp").textContent = m.app || "";
+        el("playPauseBtn").textContent = m.playing ? "\u23F8 Pausar" : "\u25B6 Tocar";
+        el("muteBtn").textContent = m.muted ? "Desmutar" : "Mutar";
+        el("muteBtn").classList.toggle("btn-deny", Boolean(m.muted));
+        if (document.activeElement !== el("volSlider")) {
+          el("volSlider").value = m.volume_pct ?? 0;
+        }
+        el("volPct").textContent = `${m.volume_pct ?? 0}%`;
+
+        const img = el("mediaArtImg");
+        const fallback = el("mediaArtFallback");
+        if (m.artwork_data_url) {
+          img.src = m.artwork_data_url;
+          img.classList.remove("hidden");
+          fallback.classList.add("hidden");
+        } else {
+          img.classList.add("hidden");
+          fallback.classList.remove("hidden");
+        }
+      }
+
+      function renderPc(pc, adb) {
+        if (adb) {
+          const pill = el("adbPill");
+          if (adb.reverse_active) {
+            pill.textContent = `USB: ${adb.devices.length} OK`;
+            pill.classList.add("on");
+          } else if (!adb.adb_found) {
+            pill.textContent = "ADB ausente";
+            pill.classList.remove("on");
+          } else {
+            pill.textContent = "USB: aguardando";
+            pill.classList.remove("on");
+          }
+        }
+        if (!pc) return;
+        el("uptimeLabel").textContent = `Up ${fmtUptime(pc.uptime_sec || 0)}`;
+        el("cpuVal").textContent = `${(pc.cpu_pct || 0).toFixed(0)}%`;
+        el("cpuName").textContent = pc.cpu_name || "CPU";
+        el("ramVal").textContent = `${pc.ram_used_gb.toFixed(1)} GB`;
+        el("ramSub").textContent = `de ${pc.ram_total_gb.toFixed(1)} GB`;
+        el("netVal").textContent = `${fmtRate(pc.net_down_bps || 0)}`;
+        el("netSub").textContent = `Subida: ${fmtRate(pc.net_up_bps || 0)}`;
+
+        if (pc.gpu) {
+          const g = pc.gpu;
+          const util = g.util_pct != null ? `${g.util_pct.toFixed(0)}%` : "--";
+          const temp = g.temp_c != null ? ` · ${g.temp_c.toFixed(0)}°C` : "";
+          el("gpuVal").textContent = `${util}${temp}`;
+          const vram = g.vram_used_mb != null && g.vram_total_mb != null
+            ? ` · ${(g.vram_used_mb / 1024).toFixed(1)}/${(g.vram_total_mb / 1024).toFixed(1)} GB`
+            : "";
+          el("gpuSub").textContent = `${g.name}${vram}`;
+        } else {
+          el("gpuVal").textContent = "N/D";
+          el("gpuSub").textContent = "Sem NVIDIA detectada";
+        }
+
+        const disks = el("diskList");
+        disks.replaceChildren();
+        for (const d of pc.disks || []) {
+          const row = document.createElement("div");
+          row.className = "disk-item";
+          const name = document.createElement("span");
+          name.textContent = `Disco ${d.name}`;
+          const val = document.createElement("span");
+          val.textContent = `${d.used_gb.toFixed(0)} / ${d.total_gb.toFixed(0)} GB`;
+          row.append(name, val);
+          disks.appendChild(row);
+        }
+      }
+
+      function renderNotifications() {
+        const feed = el("notifyFeed");
+        feed.replaceChildren();
+        if (!currentNotifications.length) {
+          const empty = document.createElement("div");
+          empty.className = "feed-body";
+          empty.textContent = "Nenhuma notificação recente.";
+          feed.appendChild(empty);
+          return;
+        }
+        const sorted = [...currentNotifications].sort((a, b) => b.created_at_ms - a.created_at_ms).slice(0, 15);
+        for (const n of sorted) {
+          const item = document.createElement("div");
+          item.className = `feed-item ${n.level || "info"}`;
+          const head = document.createElement("div");
+          head.className = "feed-head";
+          const title = document.createElement("span");
+          title.textContent = n.title;
+          const tm = document.createElement("span");
+          tm.className = "feed-time";
+          tm.textContent = new Date(n.created_at_ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+          head.append(title, tm);
+
+          const body = document.createElement("div");
+          body.className = "feed-body";
+          body.textContent = n.body;
+          item.append(head, body);
+          feed.appendChild(item);
+        }
+      }
+
+      function applyFullState(s) {
+        renderPc(s.pc, s.adb);
+        renderMedia(s.media);
+        if (Array.isArray(s.notifications)) {
+          currentNotifications = s.notifications;
+          renderNotifications();
+        }
+        if (Array.isArray(s.approvals)) {
+          currentApprovals = new Map(s.approvals.map((a) => [a.id, a]));
+          renderApprovals();
+        }
+      }
+
+      function handleSseEvent(eventName, rawData) {
+        let data;
+        try { data = JSON.parse(rawData); } catch { return; }
+        if (eventName === "state") {
+          applyFullState(data);
+        } else if (eventName === "notify") {
+          currentNotifications.push(data);
+          if (currentNotifications.length > 30) currentNotifications.shift();
+          renderNotifications();
+          alertUser(false);
+        } else if (eventName === "approval") {
+          currentApprovals.set(data.id, data);
+          renderApprovals();
+          alertUser(true);
+        } else if (eventName === "approval-done") {
+          currentApprovals.delete(data.id);
+          renderApprovals();
+        }
+      }
+
+      function showTokenGate() {
+        el("tokenCard").classList.remove("hidden");
+        setConn("err", "Sem token");
+      }
+
+      async function startStream() {
+        if (!token) {
+          showTokenGate();
+          return;
+        }
+        el("tokenCard").classList.add("hidden");
+        if (streamAbort) streamAbort.abort();
+        streamAbort = new AbortController();
+
+        setConn("warn", "Conectando...");
+        try {
+          const resp = await fetch("/api/stream", {
+            headers: { "X-DeskPulse-Token": token },
+            signal: streamAbort.signal,
+          });
+          if (resp.status === 401 || resp.status === 403) {
+            showTokenGate();
+            return;
+          }
+          if (!resp.ok || !resp.body) throw new Error(`HTTP ${resp.status}`);
+
+          setConn("ok", "Conectado");
+          requestWakeLock();
+
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buf = "";
+
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            buf = buf.replace(/\r\n/g, "\n");
+            let idx;
+            while ((idx = buf.indexOf("\n\n")) !== -1) {
+              const block = buf.slice(0, idx);
+              buf = buf.slice(idx + 2);
+              let evName = "message";
+              const dataLines = [];
+              for (const line of block.split("\n")) {
+                if (line.startsWith("event:")) evName = line.slice(6).trim();
+                else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+              }
+              if (dataLines.length > 0) {
+                handleSseEvent(evName, dataLines.join("\n"));
+              }
+            }
+          }
+          throw new Error("stream ended");
+        } catch (err) {
+          if (err && err.name === "AbortError") return;
+          setConn("err", "Reconectando...");
+          setTimeout(() => {
+            if (token) startStream();
+          }, 1500);
+        }
+      }
+
+      document.querySelectorAll("[data-media]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const action = btn.getAttribute("data-media");
+          try {
+            const snap = await apiPost(`/api/media/${action}`);
+            renderMedia(snap);
+          } catch {}
+        });
+      });
+
+      el("volSlider").addEventListener("input", (ev) => {
+        const level = Number(ev.target.value);
+        el("volPct").textContent = `${level}%`;
+        clearTimeout(volTimer);
+        volTimer = setTimeout(async () => {
+          try {
+            const snap = await apiPost("/api/media/volume", { level });
+            renderMedia(snap);
+          } catch {}
+        }, 70);
+      });
+
+      el("wakeBtn").addEventListener("click", () => requestWakeLock());
+
+      el("soundBtn").addEventListener("click", () => {
+        soundEnabled = !soundEnabled;
+        el("soundBtn").textContent = soundEnabled ? "Som: ON" : "Som: OFF";
+        el("soundBtn").classList.toggle("on", soundEnabled);
+        if (soundEnabled) alertUser(false);
+      });
+
+      el("tokenResetBtn").addEventListener("click", () => {
+        el("tokenCard").classList.toggle("hidden");
+      });
+
+      el("saveTokenBtn").addEventListener("click", () => {
+        const nextTok = el("tokenInput").value.trim();
+        if (!nextTok) return;
+        token = nextTok;
+        localStorage.setItem(TOKEN_KEY, token);
+        startStream();
+      });
+
+      token = loadToken();
+      startStream();
+    })();
+  </script>
+</body>
+</html>
