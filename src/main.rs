@@ -1,3 +1,4 @@
+mod agenda;
 mod approvals;
 mod config;
 mod events;
