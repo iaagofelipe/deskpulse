@@ -1,4 +1,6 @@
+mod approvals;
 mod config;
+mod events;
 mod security;
 
 use std::env;
