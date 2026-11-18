@@ -296,9 +296,6 @@ fn scan_antigravity_dir_at(root: &Path, now: SystemTime) -> AntigravitySnapshot 
         });
     }
 
-    candidates.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.id.cmp(&b.id)));
-    candidates.truncate(MAX_SESSIONS);
-
     let mut sessions = Vec::with_capacity(candidates.len());
     for cand in candidates {
         let has_lock = presence_root.join(format!("{}.lock", cand.id)).is_file();
@@ -359,6 +356,7 @@ fn scan_antigravity_dir_at(root: &Path, now: SystemTime) -> AntigravitySnapshot 
             .then_with(|| b.updated_at_ms.cmp(&a.updated_at_ms))
             .then_with(|| a.id.cmp(&b.id))
     });
+    sessions.truncate(MAX_SESSIONS);
 
     AntigravitySnapshot { sessions }
 }
@@ -656,5 +654,59 @@ mod tests {
         assert_eq!(monitor.snapshot().sessions[0].status, "running");
 
         let _ = tx.send(true);
+    }
+
+    #[test]
+    fn test_scan_antigravity_dir_truncates_after_status_ranking() {
+        let dir = TempDir::new().expect("tempdir");
+        let root = dir.path().join("antigravity");
+        fs::create_dir_all(root.join("annotations")).unwrap();
+        fs::create_dir_all(root.join("presence")).unwrap();
+
+        let now = SystemTime::now();
+
+        // Create 6 newer idle sessions (no .lock)
+        for i in 0..6 {
+            let id = format!("idle-{i}");
+            let brain = root.join("brain").join(&id);
+            fs::create_dir_all(&brain).unwrap();
+            let tx_path = brain.join("transcript.jsonl");
+            fs::write(
+                &tx_path,
+                r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"DONE"}"#,
+            )
+            .unwrap();
+            let mtime = now - Duration::from_secs(10 + i as u64);
+            fs::File::options()
+                .write(true)
+                .open(&tx_path)
+                .unwrap()
+                .set_modified(mtime)
+                .unwrap();
+        }
+
+        // Create 1 older-mtime active running session (has .lock)
+        let active_id = "active-older";
+        let active_brain = root.join("brain").join(active_id);
+        fs::create_dir_all(&active_brain).unwrap();
+        fs::write(root.join("presence").join(format!("{active_id}.lock")), "").unwrap();
+        let active_tx = active_brain.join("transcript.jsonl");
+        fs::write(
+            &active_tx,
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","status":"IN_PROGRESS"}"#,
+        )
+        .unwrap();
+        let older_mtime = now - Duration::from_secs(3600);
+        fs::File::options()
+            .write(true)
+            .open(&active_tx)
+            .unwrap()
+            .set_modified(older_mtime)
+            .unwrap();
+
+        let snap = scan_antigravity_dir_at(&root, now);
+        assert_eq!(snap.sessions.len(), MAX_SESSIONS);
+        assert_eq!(snap.sessions[0].id, active_id);
+        assert_eq!(snap.sessions[0].status, "running");
     }
 }

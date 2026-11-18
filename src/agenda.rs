@@ -112,6 +112,7 @@ impl AgendaStore {
             if guard.ics_url != normalized {
                 guard.ics_url = normalized;
                 guard.ics_events.clear();
+                guard.last_sync_ms = None;
                 guard.error = None;
             }
         }
@@ -507,13 +508,12 @@ fn normalize_optional_url(url: Option<String>) -> Option<String> {
 }
 
 fn to_http_fetch_url(url: &str) -> String {
-    if let Some(rest) = url.strip_prefix("webcal://") {
-        format!("https://{rest}")
-    } else if let Some(rest) = url.strip_prefix("WEBCAL://") {
-        format!("https://{rest}")
-    } else {
-        url.to_string()
+    if let Some((scheme, rest)) = url.split_once("://") {
+        if scheme.eq_ignore_ascii_case("webcal") || scheme.eq_ignore_ascii_case("webcals") {
+            return format!("https://{rest}");
+        }
     }
+    url.to_string()
 }
 
 fn normalize_pushed_events(events: Vec<AgendaEvent>, today: NaiveDate) -> Vec<AgendaEvent> {
@@ -967,5 +967,61 @@ mod tests {
 
         let _ = tx.send(true);
         let _ = server_task.await;
+    }
+
+    #[tokio::test]
+    async fn test_set_ics_url_clears_last_sync_ms_and_webcal_is_case_insensitive() {
+        assert_eq!(
+            to_http_fetch_url("WEBCAL://calendar.example.com/feed.ics"),
+            "https://calendar.example.com/feed.ics"
+        );
+        assert_eq!(
+            to_http_fetch_url("Webcal://calendar.example.com/feed.ics"),
+            "https://calendar.example.com/feed.ics"
+        );
+        assert_eq!(
+            to_http_fetch_url("webcals://calendar.example.com/feed.ics"),
+            "https://calendar.example.com/feed.ics"
+        );
+        assert_eq!(
+            to_http_fetch_url("WEBCALS://calendar.example.com/feed.ics"),
+            "https://calendar.example.com/feed.ics"
+        );
+
+        let dir = TempDir::new().expect("tempdir");
+        let push_path = dir.path().join("agenda_push.json");
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = sock.read(&mut buf).await;
+                let body = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/calendar\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+            }
+        });
+
+        let url1 = format!("http://{addr}/cal1.ics");
+        let store = AgendaStore::new(push_path, Some(url1.clone()));
+        let synced = store.refresh_now().await.expect("initial sync");
+        let _ = server_task.await;
+        assert!(synced.last_sync_ms.is_some());
+
+        // Setting the exact same URL keeps last_sync_ms intact
+        store.set_ics_url(Some(url1));
+        assert!(store.snapshot().last_sync_ms.is_some());
+
+        // Changing the URL clears last_sync_ms, error, and ics_events
+        store.set_ics_url(Some("http://127.0.0.1:9/cal2.ics".to_string()));
+        let after_change = store.snapshot();
+        assert!(after_change.ics_configured);
+        assert_eq!(after_change.last_sync_ms, None);
+        assert_eq!(after_change.error, None);
     }
 }

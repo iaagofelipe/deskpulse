@@ -1189,4 +1189,205 @@ mod tests {
                 .unwrap();
         assert_eq!(after_val["todos"].as_array().unwrap().len(), 0);
     }
+
+    #[tokio::test]
+    async fn test_settings_and_agenda_refresh_endpoints() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let (state, _media, _tx, _dir) = make_test_state();
+        let cfg_path = state.config_path.clone();
+        let app = build_router(state);
+
+        // Initial GET /api/settings
+        let initial_get = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/settings")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(initial_get.status(), StatusCode::OK);
+        let initial_val: Value =
+            serde_json::from_slice(&initial_get.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(initial_val["remote_approval_enabled"], false);
+        assert!(initial_val["calendar_ics_url"].is_null());
+
+        // Local mock ICS server serving 2 sequential valid responses
+        let today_yyyymmdd = chrono::Local::now().date_naive().format("%Y%m%d").to_string();
+        let ics_body = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n\
+             BEGIN:VEVENT\r\nUID:ics-test-1\r\nDTSTART;VALUE=DATE:{today_yyyymmdd}\r\nSUMMARY:ICS Synced Event\r\nEND:VEVENT\r\n\
+             END:VCALENDAR\r\n"
+        );
+        let ok_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ok_addr = ok_listener.local_addr().unwrap();
+        let ok_server = tokio::spawn(async move {
+            for _ in 0..2 {
+                if let Ok((mut sock, _)) = ok_listener.accept().await {
+                    let mut buf = [0u8; 1024];
+                    let _ = sock.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: text/calendar; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        ics_body.len(),
+                        ics_body
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                }
+            }
+        });
+
+        let ok_url = format!("http://{ok_addr}/cal.ics");
+        let set_ok_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/settings")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json!({ "calendar_ics_url": ok_url }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(set_ok_resp.status(), StatusCode::OK);
+        let set_ok_val: Value =
+            serde_json::from_slice(&set_ok_resp.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(set_ok_val["ok"], true);
+        assert_eq!(set_ok_val["calendar_ics_url"], ok_url);
+        assert_eq!(set_ok_val["agenda"]["ics_configured"], true);
+        assert!(set_ok_val["agenda"]["last_sync_ms"].is_u64());
+        assert!(set_ok_val["agenda"]["error"].is_null());
+        assert_eq!(
+            set_ok_val["agenda"]["events"][0]["title"],
+            "ICS Synced Event"
+        );
+
+        // GET /api/settings reflects updated URL
+        let get_after = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/settings")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(get_after.status(), StatusCode::OK);
+        let get_after_val: Value =
+            serde_json::from_slice(&get_after.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(get_after_val["calendar_ics_url"], ok_url);
+
+        // POST /api/agenda/refresh succeeds
+        let refresh_ok = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/agenda/refresh")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refresh_ok.status(), StatusCode::OK);
+        let refresh_ok_val: Value =
+            serde_json::from_slice(&refresh_ok.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert!(refresh_ok_val["last_sync_ms"].is_u64());
+        assert!(refresh_ok_val["error"].is_null());
+        let _ = ok_server.await;
+
+        // Closed local socket fails immediately in ms without DNS/network
+        let closed_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let closed_addr = closed_listener.local_addr().unwrap();
+        let closed_server = tokio::spawn(async move {
+            for _ in 0..2 {
+                if let Ok((sock, _)) = closed_listener.accept().await {
+                    drop(sock);
+                }
+            }
+        });
+
+        let broken_url = format!("http://{closed_addr}/broken.ics");
+        let set_broken_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/settings")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(
+                        json!({ "calendar_ics_url": broken_url }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(set_broken_resp.status(), StatusCode::OK);
+        let set_broken_val: Value = serde_json::from_slice(
+            &set_broken_resp.into_body().collect().await.unwrap().to_bytes(),
+        )
+        .unwrap();
+        assert_eq!(set_broken_val["ok"], true);
+        assert_eq!(set_broken_val["calendar_ics_url"], broken_url);
+        assert_eq!(set_broken_val["agenda"]["ics_configured"], true);
+        assert!(
+            set_broken_val["agenda"]["last_sync_ms"].is_null(),
+            "last_sync_ms must be cleared when calendar_ics_url changes"
+        );
+        assert!(
+            set_broken_val["agenda"]["error"].is_string(),
+            "refresh failure should record agenda error"
+        );
+        assert_eq!(
+            set_broken_val["agenda"]["events"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let saved_cfg = crate::config::load_or_create(&cfg_path).expect("saved config");
+        assert_eq!(saved_cfg.calendar_ics_url.as_deref(), Some(broken_url.as_str()));
+
+        // POST /api/agenda/refresh returns 500 with error details when feed fails
+        let refresh_err = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/agenda/refresh")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(refresh_err.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let refresh_err_val: Value =
+            serde_json::from_slice(&refresh_err.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(refresh_err_val["ok"], false);
+        assert!(refresh_err_val["error"].is_string());
+
+        let _ = closed_server.await;
+    }
 }

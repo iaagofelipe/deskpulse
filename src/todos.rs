@@ -284,15 +284,19 @@ fn resolve_index_or_id(items: &[TodoItem], id_or_index: &str) -> Option<usize> {
         return None;
     }
 
-    // 1-based index support
+    // Exact id matching takes precedence over 1-based index fallback
+    if let Some(pos) = items.iter().position(|item| item.id == trimmed) {
+        return Some(pos);
+    }
+
+    // 1-based index fallback
     if let Ok(idx_1based) = trimmed.parse::<usize>() {
         if idx_1based >= 1 && idx_1based <= items.len() {
             return Some(idx_1based - 1);
         }
     }
 
-    // Exact id matching
-    items.iter().position(|item| item.id == trimmed)
+    None
 }
 
 fn get_disk_metadata(path: &Path) -> Result<DiskMetadata, String> {
@@ -441,5 +445,53 @@ mod tests {
         let on_disk: Vec<TodoItem> = serde_json::from_str(&disk_content).expect("parse disk");
         assert_eq!(on_disk.len(), 2);
         assert!(on_disk[1].done);
+    }
+
+    #[test]
+    fn test_todo_exact_id_takes_precedence_over_1based_index() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("todos.json");
+        let initial_items = vec![
+            TodoItem {
+                id: "2".to_string(),
+                text: "Item with numeric ID 2 at index 0".to_string(),
+                done: false,
+                created_at_ms: 1000,
+            },
+            TodoItem {
+                id: "alpha".to_string(),
+                text: "Second item in list".to_string(),
+                done: false,
+                created_at_ms: 1001,
+            },
+            TodoItem {
+                id: "beta".to_string(),
+                text: "Third item in list".to_string(),
+                done: false,
+                created_at_ms: 1002,
+            },
+        ];
+        fs::write(
+            &path,
+            serde_json::to_string_pretty(&initial_items).unwrap(),
+        )
+        .unwrap();
+
+        let store = TodoStore::open(path).expect("open store");
+
+        // toggle("2") must match item with id == "2" (pos 0), NOT 1-based index 2 ("alpha")
+        let toggled = store.toggle("2").expect("toggle").expect("found");
+        assert_eq!(toggled.id, "2");
+        assert!(toggled.done);
+        let list = store.list();
+        assert!(list[0].done);
+        assert!(!list[1].done);
+
+        // remove("2") must remove item with id == "2" (pos 0), leaving "alpha" and "beta"
+        assert!(store.remove("2").expect("remove"));
+        let remaining = store.list();
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[0].id, "alpha");
+        assert_eq!(remaining[1].id, "beta");
     }
 }
