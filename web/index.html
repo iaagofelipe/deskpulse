@@ -22,7 +22,7 @@
       --green: #22c55e;
       --amber: #f59e0b;
       --red: #ef4444;
-      --nav-h: 52px;
+      --nav-h: 54px;
       --radius: 10px;
     }
 
@@ -270,7 +270,7 @@
     .ov-left, .ov-right {
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
       min-height: 0;
       overflow: hidden;
     }
@@ -433,7 +433,8 @@
     /* Media Card in Visao Geral */
     .media-card {
       flex-shrink: 0;
-      gap: 7px;
+      gap: 5px;
+      padding: 6px 9px;
     }
 
     .media-info-row {
@@ -444,8 +445,8 @@
     }
 
     .art {
-      width: 44px;
-      height: 44px;
+      width: 38px;
+      height: 38px;
       border-radius: 8px;
       background: var(--surface-2);
       border: 1px solid var(--border);
@@ -521,14 +522,14 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      padding: 6px 10px;
+      padding: 5px 9px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       cursor: pointer;
       text-align: left;
       width: 100%;
-      min-height: 36px;
+      min-height: 32px;
     }
 
     .ag-strip-main {
@@ -551,7 +552,11 @@
     .pc-mini-card {
       flex: 1 1 0;
       min-height: 0;
-      padding: 7px 9px;
+      padding: 6px 8px;
+    }
+
+    .pc-mini-card .card-head {
+      margin-bottom: 4px;
     }
 
     .pc-2x2 {
@@ -559,19 +564,21 @@
       min-height: 0;
       display: grid;
       grid-template-columns: 1fr 1fr;
-      grid-template-rows: 1fr 1fr;
-      gap: 6px;
+      grid-template-rows: repeat(2, minmax(0, 1fr));
+      gap: 5px;
     }
 
     .pc-cell {
       background: var(--surface-2);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 6px 8px;
+      padding: 4px 7px;
       display: flex;
       flex-direction: column;
       justify-content: space-between;
+      gap: 2px;
       min-height: 0;
+      overflow: hidden;
     }
 
     .pc-cell-top {
@@ -579,22 +586,47 @@
       align-items: baseline;
       justify-content: space-between;
       gap: 6px;
+      min-width: 0;
+      line-height: 1.15;
+    }
+
+    .pc-cell-title {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+      min-width: 0;
+      overflow: hidden;
     }
 
     .pc-cell-label {
       font-size: 11px;
       font-weight: 700;
       color: var(--muted);
+      flex-shrink: 0;
+    }
+
+    .pc-cell-hint {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
+      min-width: 0;
     }
 
     .pc-cell-val {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .pc-cell-sub {
       font-size: 11px;
+      line-height: 1.15;
       color: var(--muted);
       white-space: nowrap;
       overflow: hidden;
@@ -831,33 +863,41 @@
       min-height: 0;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
+    }
+
+    .pc-mon-layout .card {
+      padding: 6px 9px;
+    }
+
+    .pc-mon-layout .card-head {
+      margin-bottom: 4px;
     }
 
     .pc-top-row {
-      flex: 1.1 1 0;
+      flex: 1 1 0;
       min-height: 0;
       display: grid;
       grid-template-columns: 1.35fr 1fr 1fr;
-      gap: 8px;
+      gap: 6px;
     }
     .pc-top-row.no-gpu {
       grid-template-columns: 1.45fr 1fr;
     }
 
     .pc-mid-row {
-      flex: 1 1 0;
+      flex: 1.05 1 0;
       min-height: 0;
       display: grid;
       grid-template-columns: 1.25fr 1fr;
-      gap: 8px;
+      gap: 6px;
     }
 
     .pc-actions-row {
       flex-shrink: 0;
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+      gap: 6px;
     }
 
     .pc-actions-row button {
@@ -883,8 +923,8 @@
     .disk-row {
       display: flex;
       flex-direction: column;
-      gap: 3px;
-      padding: 5px 7px;
+      gap: 2px;
+      padding: 4px 7px;
       background: var(--surface-2);
       border: 1px solid var(--border);
       border-radius: 7px;
@@ -1052,18 +1092,22 @@
                 </div>
                 <div class="pc-cell">
                   <div class="pc-cell-top">
-                    <span class="pc-cell-label">RAM</span>
+                    <span class="pc-cell-title">
+                      <span class="pc-cell-label">RAM</span>
+                      <span id="ovRamSub" class="pc-cell-hint">-- / -- GB</span>
+                    </span>
                     <span id="ovRamVal" class="pc-cell-val">--%</span>
                   </div>
-                  <div id="ovRamSub" class="pc-cell-sub">-- / -- GB</div>
                   <div class="bar-track"><div id="ovRamBar" class="bar-fill"></div></div>
                 </div>
                 <div class="pc-cell">
                   <div class="pc-cell-top">
-                    <span id="ovDiskLabel" class="pc-cell-label">Disco C:</span>
+                    <span class="pc-cell-title">
+                      <span id="ovDiskLabel" class="pc-cell-label">Disco C:</span>
+                      <span id="ovDiskSub" class="pc-cell-hint">-- GB livres</span>
+                    </span>
                     <span id="ovDiskVal" class="pc-cell-val">--%</span>
                   </div>
-                  <div id="ovDiskSub" class="pc-cell-sub">-- GB livres</div>
                   <div class="bar-track"><div id="ovDiskBar" class="bar-fill"></div></div>
                 </div>
                 <div class="pc-cell">
@@ -1186,8 +1230,8 @@
                 <span class="card-title">Memória RAM</span>
                 <span id="pcRamPct" class="badge">--%</span>
               </div>
-              <div id="pcRamUsed" style="font-size:20px;font-weight:800;font-variant-numeric:tabular-nums;">-- GB</div>
-              <div id="pcRamTotal" class="pc-cell-sub" style="margin:2px 0 8px;">de -- GB</div>
+              <div id="pcRamUsed" style="font-size:18px;font-weight:800;line-height:1.15;font-variant-numeric:tabular-nums;">-- GB</div>
+              <div id="pcRamTotal" class="pc-cell-sub" style="margin:2px 0 6px;">de -- GB</div>
               <div class="bar-track"><div id="pcRamBar" class="bar-fill"></div></div>
             </div>
 
@@ -1197,7 +1241,7 @@
                 <span id="pcGpuVal" class="badge">--</span>
               </div>
               <div id="pcGpuName" style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">--</div>
-              <div id="pcGpuSub" class="pc-cell-sub" style="margin:4px 0 8px;">--</div>
+              <div id="pcGpuSub" class="pc-cell-sub" style="margin:2px 0 6px;">--</div>
               <div class="bar-track"><div id="pcGpuBar" class="bar-fill"></div></div>
             </div>
           </div>
@@ -1218,7 +1262,7 @@
                 <span class="card-title">Rede &amp; Sistema</span>
                 <span id="pcUptime" class="badge">Up --</span>
               </div>
-              <div style="display:flex;flex-direction:column;gap:6px;flex:1;justify-content:space-between;">
+              <div style="display:flex;flex-direction:column;gap:4px;flex:1;justify-content:space-between;min-height:0;">
                 <div class="disk-row">
                   <div class="disk-row-top"><span>Download / Upload</span><span id="pcNetRates">-- / --</span></div>
                 </div>
@@ -1256,8 +1300,10 @@
         <div style="font-size:12px;color:var(--muted);">
           Cole o token exibido no terminal do PC ou abra pelo link com <span class="mono">#token=...</span>:
         </div>
-        <input id="tokenInput" type="password" placeholder="64 caracteres hexadecimais" />
-        <button type="button" id="saveTokenBtn" class="btn-ok" style="min-height:44px;">Conectar</button>
+        <form id="tokenForm" style="display:flex;flex-direction:column;gap:8px;">
+          <input id="tokenInput" type="password" placeholder="64 caracteres hexadecimais" />
+          <button type="submit" id="saveTokenBtn" class="btn-ok" style="min-height:44px;">Conectar</button>
+        </form>
       </div>
     </div>
 
@@ -1308,6 +1354,14 @@
       let settingsLoaded = false;
       let lockConfirmTimer = null;
       let lockConfirmPending = false;
+      let lastAgendaSig = "";
+      let lastTodosSig = "";
+      let lastArtworkUrl = null;
+      let renderedApprovalId = null;
+      let renderedApprovalQueueCount = 0;
+      let approvalTimerEl = null;
+      let approvalBarFillEl = null;
+      let approvalInFlightId = null;
 
       // Focus timer state (client-side only)
       let focusDurationSec = 25 * 60;
@@ -1336,6 +1390,7 @@
 
       async function requestWakeLock() {
         if (!("wakeLock" in navigator)) return;
+        if (wakeLock && !wakeLock.released) return;
         try {
           wakeLock = await navigator.wakeLock.request("screen");
         } catch {}
@@ -1422,14 +1477,14 @@
       }
 
       function thresholdClass(pct) {
-        if (pct >= 90) return "err";
-        if (pct >= 70) return "warn";
+        if (pct >= 85) return "err";
+        if (pct >= 60) return "warn";
         return "ok";
       }
 
       function thresholdColor(pct) {
-        if (pct >= 90) return "#ef4444";
-        if (pct >= 70) return "#f59e0b";
+        if (pct >= 85) return "#ef4444";
+        if (pct >= 60) return "#f59e0b";
         return "#22c55e";
       }
 
@@ -1540,11 +1595,20 @@
         // Overview mini list (next 3 ongoing/upcoming events)
         const ovBadge = el("ovAgendaBadge");
         const ovList = el("ovAgendaList");
-        ovList.replaceChildren();
 
         const enriched = events.map((ev) => ({ ev, timing: parseEventTiming(ev) }));
         const upcoming = enriched.filter((x) => x.timing.state !== "past");
         ovBadge.textContent = `${upcoming.length} próx`;
+
+        const agendaSig = JSON.stringify({
+          configured: Boolean(ag.configured),
+          count: events.length,
+          items: enriched.map(({ ev, timing }) => [ev.title, timing.timeLabel, timing.relLabel, timing.state])
+        });
+        if (agendaSig === lastAgendaSig) return;
+        lastAgendaSig = agendaSig;
+
+        ovList.replaceChildren();
 
         if (!ag.configured && events.length === 0) {
           const empty = document.createElement("div");
@@ -1625,6 +1689,10 @@
 
       function renderTodos() {
         const todos = Array.isArray(dashboard.todos) ? dashboard.todos : [];
+        const sig = JSON.stringify(todos);
+        if (sig === lastTodosSig) return;
+        lastTodosSig = sig;
+
         const doneCount = todos.filter((t) => t.done).length;
         const badgeText = `${doneCount}/${todos.length}`;
         el("ovTodoBadge").textContent = badgeText;
@@ -1724,11 +1792,19 @@
 
         const img = el("mediaArtImg");
         const fallback = el("mediaArtFallback");
-        if (m.artwork_data_url) {
-          img.src = m.artwork_data_url;
+        const artUrl = m.artwork_data_url || null;
+        if (artUrl) {
+          if (artUrl !== lastArtworkUrl) {
+            img.src = artUrl;
+            lastArtworkUrl = artUrl;
+          }
           img.classList.remove("hidden");
           fallback.classList.add("hidden");
         } else {
+          if (lastArtworkUrl !== null) {
+            img.removeAttribute("src");
+            lastArtworkUrl = null;
+          }
           img.classList.add("hidden");
           fallback.classList.remove("hidden");
         }
@@ -2024,12 +2100,29 @@
         }
       }
 
+      function updateApprovalCountdown(req) {
+        const now = Date.now();
+        if (approvalTimerEl && req.expires_at_ms) {
+          approvalTimerEl.textContent = `${Math.max(0, Math.ceil((req.expires_at_ms - now) / 1000))}s`;
+        }
+        if (approvalBarFillEl && req.expires_at_ms && req.created_at_ms) {
+          const totalMs = Math.max(1000, req.expires_at_ms - req.created_at_ms);
+          const remMs = Math.max(0, req.expires_at_ms - now);
+          approvalBarFillEl.style.width = `${Math.max(0, Math.min(100, (remMs / totalMs) * 100))}%`;
+        }
+      }
+
       function renderApprovals() {
         const overlay = el("approvalOverlay");
         const mount = el("approvalMount");
-        mount.replaceChildren();
 
         if (currentApprovals.size === 0) {
+          renderedApprovalId = null;
+          renderedApprovalQueueCount = 0;
+          approvalTimerEl = null;
+          approvalBarFillEl = null;
+          approvalInFlightId = null;
+          mount.replaceChildren();
           overlay.classList.add("hidden");
           updateAgentsNavBadge();
           return;
@@ -2038,7 +2131,19 @@
         overlay.classList.remove("hidden");
         const items = Array.from(currentApprovals.values()).sort((a, b) => a.created_at_ms - b.created_at_ms);
         const req = items[0];
-        const now = Date.now();
+        const queueCount = items.length;
+
+        if (renderedApprovalId === req.id && renderedApprovalQueueCount === queueCount) {
+          updateApprovalCountdown(req);
+          updateAgentsNavBadge();
+          return;
+        }
+
+        mount.replaceChildren();
+        renderedApprovalId = req.id;
+        renderedApprovalQueueCount = queueCount;
+        approvalTimerEl = null;
+        approvalBarFillEl = null;
 
         const head = document.createElement("div");
         head.className = "card-head";
@@ -2054,16 +2159,16 @@
 
         const rightHead = document.createElement("div");
         rightHead.style.cssText = "display:flex;align-items:center;gap:6px;";
-        if (items.length > 1) {
+        if (queueCount > 1) {
           const queueBadge = document.createElement("span");
           queueBadge.className = "badge";
-          queueBadge.textContent = `+${items.length - 1}`;
+          queueBadge.textContent = `+${queueCount - 1}`;
           rightHead.appendChild(queueBadge);
         }
         if (req.expires_at_ms) {
           const timer = document.createElement("span");
           timer.className = "badge warn";
-          timer.textContent = `${Math.max(0, Math.ceil((req.expires_at_ms - now) / 1000))}s`;
+          approvalTimerEl = timer;
           rightHead.appendChild(timer);
         }
         head.append(leftHead, rightHead);
@@ -2086,46 +2191,57 @@
         }
 
         if (req.expires_at_ms && req.created_at_ms) {
-          const totalMs = Math.max(1000, req.expires_at_ms - req.created_at_ms);
-          const remMs = Math.max(0, req.expires_at_ms - now);
           const track = document.createElement("div");
           track.className = "bar-track";
           const fill = document.createElement("div");
           fill.className = "bar-fill warn";
-          fill.style.width = `${Math.max(0, Math.min(100, (remMs / totalMs) * 100))}%`;
+          approvalBarFillEl = fill;
           track.appendChild(fill);
           mount.appendChild(track);
         }
 
+        updateApprovalCountdown(req);
+
         const btns = document.createElement("div");
         btns.className = "approval-btns";
 
+        const isInFlight = approvalInFlightId === req.id;
+
         const decide = async (decision) => {
+          if (approvalInFlightId === req.id) return;
+          approvalInFlightId = req.id;
           btns.querySelectorAll("button").forEach((b) => (b.disabled = true));
           try {
             await apiRequest("POST", `/api/approvals/${encodeURIComponent(req.id)}`, { decision });
+            if (approvalInFlightId === req.id) approvalInFlightId = null;
             currentApprovals.delete(req.id);
             renderApprovals();
           } catch {
-            btns.querySelectorAll("button").forEach((b) => (b.disabled = false));
+            if (approvalInFlightId === req.id) approvalInFlightId = null;
+            if (renderedApprovalId === req.id) {
+              mount.querySelectorAll(".approval-btns button").forEach((b) => (b.disabled = false));
+            }
           }
         };
 
         const bAllow = document.createElement("button");
         bAllow.type = "button";
         bAllow.className = "btn-ok";
-        bAllow.textContent = "Aprovar";
+        bAllow.textContent = "Permitir";
+        bAllow.disabled = isInFlight;
         bAllow.onclick = () => decide("allow");
 
         const bDeny = document.createElement("button");
         bDeny.type = "button";
         bDeny.className = "btn-err";
-        bDeny.textContent = "Rejeitar";
+        bDeny.textContent = "Negar";
+        bDeny.disabled = isInFlight;
         bDeny.onclick = () => decide("deny");
 
         const bAsk = document.createElement("button");
         bAsk.type = "button";
         bAsk.textContent = "Responder no PC";
+        bAsk.disabled = isInFlight;
         bAsk.onclick = () => decide("ask");
 
         btns.append(bAllow, bDeny, bAsk);
@@ -2499,7 +2615,8 @@
         el("tokenOverlay").classList.add("hidden");
       });
 
-      el("saveTokenBtn").addEventListener("click", () => {
+      el("tokenForm").addEventListener("submit", (ev) => {
+        ev.preventDefault();
         const nextTok = el("tokenInput").value.trim();
         if (!nextTok) return;
         token = nextTok;
