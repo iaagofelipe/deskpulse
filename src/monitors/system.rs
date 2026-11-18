@@ -1,8 +1,13 @@
 use serde::Serialize;
+use std::io::Read;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use sysinfo::{Disks, Networks, System};
 use tokio::sync::watch;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct GpuSnapshot {
@@ -59,24 +64,45 @@ pub fn parse_nvidia_smi_line(line: &str) -> Option<GpuSnapshot> {
     })
 }
 
-async fn query_nvidia_gpu() -> Option<GpuSnapshot> {
-    let mut cmd = tokio::process::Command::new("nvidia-smi");
+fn query_nvidia_gpu_blocking() -> Option<GpuSnapshot> {
+    let mut cmd = Command::new("nvidia-smi");
     cmd.args([
         "--query-gpu=name,utilization.gpu,temperature.gpu,memory.used,memory.total",
         "--format=csv,noheader,nounits",
     ]);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
     #[cfg(windows)]
     cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
 
-    let out = tokio::time::timeout(Duration::from_secs(2), cmd.output())
-        .await
-        .ok()?
-        .ok()?;
-    if !out.status.success() {
-        return None;
+    let mut child = cmd.spawn().ok()?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    return None;
+                }
+                let mut stdout = String::new();
+                if let Some(mut out) = child.stdout.take() {
+                    let _ = out.read_to_string(&mut stdout);
+                }
+                return stdout.lines().find_map(parse_nvidia_smi_line);
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
     }
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    stdout.lines().find_map(parse_nvidia_smi_line)
 }
 
 fn collect_pc_snapshot(
@@ -149,60 +175,81 @@ fn collect_pc_snapshot(
 
 pub struct SystemMonitor {
     latest: Arc<RwLock<Option<PcSnapshot>>>,
+    collector_thread: Arc<RwLock<Option<String>>>,
 }
 
 impl SystemMonitor {
-    pub fn spawn(mut shutdown: watch::Receiver<bool>) -> Self {
-        let mut sys = System::new_all();
-        let mut disks = Disks::new_with_refreshed_list();
-        let mut networks = Networks::new_with_refreshed_list();
-        let initial = collect_pc_snapshot(&mut sys, &mut disks, &mut networks, 1.0, None);
-        let latest = Arc::new(RwLock::new(Some(initial)));
+    pub fn spawn(shutdown: watch::Receiver<bool>) -> Self {
+        let latest = Arc::new(RwLock::new(None));
+        let collector_thread = Arc::new(RwLock::new(None));
         let latest_bg = Arc::clone(&latest);
+        let thread_bg = Arc::clone(&collector_thread);
 
-        tokio::spawn(async move {
-            let mut last_tick = Instant::now();
-            let mut cached_gpu: Option<GpuSnapshot> = None;
-            let mut gpu_probe_tick: u64 = 0;
+        let _ = std::thread::Builder::new()
+            .name("deskpulse-sysmon".to_string())
+            .spawn(move || {
+                if let Ok(mut name_w) = thread_bg.write() {
+                    *name_w = std::thread::current().name().map(str::to_string);
+                }
 
-            loop {
-                tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                    _ = shutdown.changed() => {
+                let mut sys = System::new_all();
+                let mut disks = Disks::new_with_refreshed_list();
+                let mut networks = Networks::new_with_refreshed_list();
+                let mut cached_gpu = query_nvidia_gpu_blocking();
+
+                let initial =
+                    collect_pc_snapshot(&mut sys, &mut disks, &mut networks, 1.0, cached_gpu.clone());
+                if let Ok(mut w) = latest_bg.write() {
+                    *w = Some(initial);
+                }
+
+                let mut last_tick = Instant::now();
+                let mut gpu_probe_tick: u64 = 1;
+
+                loop {
+                    for _ in 0..5 {
                         if *shutdown.borrow() {
-                            break;
+                            return;
                         }
+                        std::thread::sleep(Duration::from_millis(200));
+                    }
+                    if *shutdown.borrow() {
+                        return;
+                    }
+
+                    if gpu_probe_tick % 2 == 0 {
+                        cached_gpu = query_nvidia_gpu_blocking();
+                    }
+                    gpu_probe_tick = gpu_probe_tick.wrapping_add(1);
+
+                    let dt = last_tick.elapsed().as_secs_f64();
+                    last_tick = Instant::now();
+                    let snap = collect_pc_snapshot(
+                        &mut sys,
+                        &mut disks,
+                        &mut networks,
+                        dt,
+                        cached_gpu.clone(),
+                    );
+                    if let Ok(mut w) = latest_bg.write() {
+                        *w = Some(snap);
                     }
                 }
-                if *shutdown.borrow() {
-                    break;
-                }
+            });
 
-                if gpu_probe_tick % 2 == 0 {
-                    cached_gpu = query_nvidia_gpu().await;
-                }
-                gpu_probe_tick = gpu_probe_tick.wrapping_add(1);
-
-                let dt = last_tick.elapsed().as_secs_f64();
-                last_tick = Instant::now();
-                let snap = collect_pc_snapshot(
-                    &mut sys,
-                    &mut disks,
-                    &mut networks,
-                    dt,
-                    cached_gpu.clone(),
-                );
-                if let Ok(mut w) = latest_bg.write() {
-                    *w = Some(snap);
-                }
-            }
-        });
-
-        Self { latest }
+        Self {
+            latest,
+            collector_thread,
+        }
     }
 
     pub fn snapshot(&self) -> Option<PcSnapshot> {
         self.latest.read().ok().and_then(|g| g.clone())
+    }
+
+    #[allow(dead_code)]
+    pub fn collector_thread_name(&self) -> Option<String> {
+        self.collector_thread.read().ok().and_then(|g| g.clone())
     }
 }
 
@@ -232,10 +279,38 @@ mod tests {
 
     #[tokio::test]
     async fn test_system_monitor_produces_initial_snapshot_without_panicking() {
-        let (_tx, rx) = watch::channel(false);
+        let (tx, rx) = watch::channel(false);
         let mon = SystemMonitor::spawn(rx);
-        let snap = mon.snapshot().expect("initial snapshot should exist");
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let snap = loop {
+            if let Some(s) = mon.snapshot() {
+                break s;
+            }
+            if Instant::now() >= deadline {
+                panic!("initial snapshot should exist");
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        };
         assert!(snap.ram_total_gb > 0.1);
         assert!(!snap.disks.is_empty());
+        let _ = tx.send(true);
+    }
+
+    #[tokio::test]
+    async fn test_system_monitor_runs_off_tokio_worker_thread() {
+        let (tx, rx) = watch::channel(false);
+        let mon = SystemMonitor::spawn(rx);
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let thread_name = loop {
+            if let Some(name) = mon.collector_thread_name() {
+                break name;
+            }
+            if Instant::now() >= deadline {
+                panic!("timed out waiting for collector thread telemetry");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        };
+        assert_eq!(thread_name, "deskpulse-sysmon");
+        let _ = tx.send(true);
     }
 }
