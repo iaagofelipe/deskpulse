@@ -14,7 +14,7 @@ pub enum Decision {
     Ask,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApprovalInput {
     pub tool_name: String,
     pub title: String,
