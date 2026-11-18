@@ -6,6 +6,7 @@ mod hooks;
 mod monitors;
 mod security;
 mod server;
+mod todos;
 
 use std::env;
 use std::io::Read;
