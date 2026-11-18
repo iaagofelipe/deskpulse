@@ -36,6 +36,19 @@ pub struct PcSnapshot {
     pub disks: Vec<DiskSnapshot>,
     pub gpu: Option<GpuSnapshot>,
     pub uptime_sec: u64,
+    pub cpu_history: Vec<u8>,
+}
+
+pub fn push_cpu_history(history: &mut Vec<u8>, cpu_pct: f32) {
+    let clamped = if cpu_pct.is_nan() {
+        0
+    } else {
+        cpu_pct.clamp(0.0, 100.0).round() as u8
+    };
+    history.push(clamped);
+    while history.len() > 30 {
+        history.remove(0);
+    }
 }
 
 fn parse_optional_f32(raw: &str) -> Option<f32> {
@@ -111,6 +124,7 @@ fn collect_pc_snapshot(
     networks: &mut Networks,
     elapsed_secs: f64,
     gpu: Option<GpuSnapshot>,
+    cpu_history: &mut Vec<u8>,
 ) -> PcSnapshot {
     sys.refresh_cpu_usage();
     sys.refresh_memory();
@@ -118,6 +132,9 @@ fn collect_pc_snapshot(
     networks.refresh(true);
 
     let cpu_pct = sys.global_cpu_usage();
+    let rounded_cpu_pct = (cpu_pct * 10.0).round() / 10.0;
+    push_cpu_history(cpu_history, rounded_cpu_pct);
+
     let cpu_name = sys
         .cpus()
         .first()
@@ -131,7 +148,7 @@ fn collect_pc_snapshot(
 
     let mut down_bytes: u64 = 0;
     let mut up_bytes: u64 = 0;
-    for (_name, net) in networks.iter() {
+    for net in networks.values() {
         down_bytes = down_bytes.saturating_add(net.received());
         up_bytes = up_bytes.saturating_add(net.transmitted());
     }
@@ -161,7 +178,7 @@ fn collect_pc_snapshot(
         .collect();
 
     PcSnapshot {
-        cpu_pct: (cpu_pct * 10.0).round() / 10.0,
+        cpu_pct: rounded_cpu_pct,
         cpu_name,
         ram_used_gb: (ram_used_gb * 100.0).round() / 100.0,
         ram_total_gb: (ram_total_gb * 100.0).round() / 100.0,
@@ -170,6 +187,7 @@ fn collect_pc_snapshot(
         disks: disk_snaps,
         gpu,
         uptime_sec: System::uptime(),
+        cpu_history: cpu_history.clone(),
     }
 }
 
@@ -196,9 +214,16 @@ impl SystemMonitor {
                 let mut disks = Disks::new_with_refreshed_list();
                 let mut networks = Networks::new_with_refreshed_list();
                 let mut cached_gpu = query_nvidia_gpu_blocking();
+                let mut cpu_history: Vec<u8> = Vec::with_capacity(30);
 
-                let initial =
-                    collect_pc_snapshot(&mut sys, &mut disks, &mut networks, 1.0, cached_gpu.clone());
+                let initial = collect_pc_snapshot(
+                    &mut sys,
+                    &mut disks,
+                    &mut networks,
+                    1.0,
+                    cached_gpu.clone(),
+                    &mut cpu_history,
+                );
                 if let Ok(mut w) = latest_bg.write() {
                     *w = Some(initial);
                 }
@@ -217,7 +242,7 @@ impl SystemMonitor {
                         return;
                     }
 
-                    if gpu_probe_tick % 2 == 0 {
+                    if gpu_probe_tick.is_multiple_of(2) {
                         cached_gpu = query_nvidia_gpu_blocking();
                     }
                     gpu_probe_tick = gpu_probe_tick.wrapping_add(1);
@@ -230,6 +255,7 @@ impl SystemMonitor {
                         &mut networks,
                         dt,
                         cached_gpu.clone(),
+                        &mut cpu_history,
                     );
                     if let Ok(mut w) = latest_bg.write() {
                         *w = Some(snap);
@@ -256,6 +282,17 @@ impl SystemMonitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_push_cpu_history_caps_at_30_and_clamps_values() {
+        let mut history = Vec::new();
+        for i in 0..35 {
+            push_cpu_history(&mut history, (i * 4) as f32);
+        }
+        assert_eq!(history.len(), 30);
+        assert_eq!(history.first().copied(), Some(20));
+        assert_eq!(history.last().copied(), Some(100));
+    }
 
     #[test]
     fn test_parse_nvidia_smi_line_valid_and_na_fields() {
@@ -293,6 +330,7 @@ mod tests {
         };
         assert!(snap.ram_total_gb > 0.1);
         assert!(!snap.disks.is_empty());
+        assert!(!snap.cpu_history.is_empty());
         let _ = tx.send(true);
     }
 
