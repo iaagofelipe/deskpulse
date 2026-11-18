@@ -1,4 +1,5 @@
 pub mod adb;
+pub mod media;
 pub mod system;
 
 #[cfg(windows)]
