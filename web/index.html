@@ -333,6 +333,7 @@
     }
 
     .agenda-mini-list {
+      flex: 1 1 0;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -341,6 +342,7 @@
     }
 
     .agenda-mini-item {
+      flex-shrink: 0;
       display: grid;
       grid-template-columns: auto 1fr auto;
       align-items: center;
@@ -383,6 +385,7 @@
     .agenda-mini-item.now .agenda-rel { color: var(--green); }
 
     .todo-mini-list {
+      flex: 1 1 0;
       display: flex;
       flex-direction: column;
       gap: 4px;
@@ -391,6 +394,7 @@
     }
 
     .todo-mini-row {
+      flex-shrink: 0;
       display: flex;
       align-items: center;
       gap: 7px;
@@ -1016,6 +1020,119 @@
       font-size: 13px;
     }
 
+    [data-collapse] {
+      cursor: pointer;
+      touch-action: manipulation;
+      user-select: none;
+    }
+
+    .head-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+
+    .collapse-ind {
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1;
+    }
+
+    .card.is-collapsed:not(.media-card) {
+      flex: 0 0 auto !important;
+    }
+
+    .card.is-collapsed:not(.media-card) > :not(.card-head) {
+      display: none !important;
+    }
+
+    .card.is-collapsed .card-head {
+      margin-bottom: 0;
+    }
+
+    .media-card.is-collapsed .media-btn-row {
+      display: none;
+    }
+
+    .mini-cal {
+      flex: 1 1 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .mini-cal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      flex-shrink: 0;
+      line-height: 1.1;
+    }
+
+    .mini-cal-month {
+      font-size: 10.5px;
+      font-weight: 700;
+      color: var(--text);
+      text-transform: capitalize;
+      white-space: nowrap;
+    }
+
+    .mini-cal-hint {
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .mini-cal-grid {
+      flex: 1 1 0;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: 1px;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    .mini-cal-dow,
+    .mini-cal-day {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      min-height: 0;
+      font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    .mini-cal-dow {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--muted);
+    }
+
+    .mini-cal-day {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text);
+      border-radius: 5px;
+    }
+
+    .mini-cal-day.muted {
+      color: var(--muted);
+      opacity: 0.35;
+    }
+
+    .mini-cal-day.today {
+      background: var(--accent);
+      color: #fff;
+      font-weight: 800;
+    }
+
     .empty-msg {
       color: var(--muted);
       font-size: 11px;
@@ -1044,20 +1161,26 @@
               </div>
             </div>
 
-            <div class="card ov-agenda">
-              <div class="card-head">
+            <div id="ovAgendaCard" class="card ov-agenda">
+              <div class="card-head" data-collapse="agenda" role="button" tabindex="0" aria-expanded="true">
                 <span class="card-title">Agenda Hoje</span>
-                <span id="ovAgendaBadge" class="badge">--</span>
+                <span class="head-meta">
+                  <span id="ovAgendaBadge" class="badge">--</span>
+                  <span id="ovAgendaChevron" class="collapse-ind">&#9662;</span>
+                </span>
               </div>
               <div id="ovAgendaList" class="agenda-mini-list">
                 <div class="empty-msg">Nenhum evento hoje</div>
               </div>
             </div>
 
-            <div class="card ov-todo">
-              <div class="card-head">
+            <div id="ovTodoCard" class="card ov-todo">
+              <div class="card-head" data-collapse="todo" role="button" tabindex="0" aria-expanded="true">
                 <span class="card-title">To-Do</span>
-                <span id="ovTodoBadge" class="badge">0/0</span>
+                <span class="head-meta">
+                  <span id="ovTodoBadge" class="badge">0/0</span>
+                  <span id="ovTodoChevron" class="collapse-ind">&#9662;</span>
+                </span>
               </div>
               <div id="ovTodoList" class="todo-mini-list">
                 <div class="empty-msg">Nenhuma tarefa</div>
@@ -1066,15 +1189,18 @@
           </div>
 
           <div class="ov-right">
-            <div class="card media-card">
-              <div class="media-info-row">
+            <div id="ovMediaCard" class="card media-card">
+              <div class="media-info-row" data-collapse="media" role="button" tabindex="0" aria-expanded="true">
                 <img id="mediaArtImg" class="art hidden" alt="Capa" />
                 <div id="mediaArtFallback" class="art">&#9835;</div>
                 <div class="media-meta">
                   <div id="mediaTitle" class="media-title">Nada reproduzindo</div>
                   <div id="mediaSub" class="media-sub">Idle</div>
                 </div>
-                <div id="mediaVolBadge" class="media-vol-badge">50%</div>
+                <span class="head-meta">
+                  <div id="mediaVolBadge" class="media-vol-badge">50%</div>
+                  <span id="ovMediaChevron" class="collapse-ind">&#9662;</span>
+                </span>
               </div>
               <div class="media-btn-row">
                 <button type="button" class="media-btn" data-media="prev">&#9198; Ant</button>
@@ -1093,10 +1219,13 @@
               <span id="agStripTasks" class="badge hidden">0/0</span>
             </button>
 
-            <div class="card pc-mini-card">
-              <div class="card-head">
+            <div id="ovPcCard" class="card pc-mini-card">
+              <div class="card-head" data-collapse="pc" role="button" tabindex="0" aria-expanded="true">
                 <span class="card-title">Saúde do PC</span>
-                <span id="ovUptime" class="badge">Up --</span>
+                <span class="head-meta">
+                  <span id="ovUptime" class="badge">Up --</span>
+                  <span id="ovPcChevron" class="collapse-ind">&#9662;</span>
+                </span>
               </div>
               <div class="pc-2x2">
                 <div class="pc-cell">
@@ -1374,6 +1503,9 @@
       let lockConfirmPending = false;
       let lastAgendaSig = "";
       let lastTodosSig = "";
+      let lastUpcomingCount = 0;
+      let lastCalendarDayKey = "";
+      const manualCollapse = { agenda: null, todo: null, media: null, pc: null };
       let lastArtworkUrl = null;
       let renderedApprovalId = null;
       let renderedApprovalQueueCount = 0;
@@ -1529,6 +1661,97 @@
         return h > 0 ? `${h}h ${m}m` : `${m}m`;
       }
 
+      function getLocalDayKey(d) {
+        return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+      }
+
+      const COLLAPSE_CARDS = {
+        agenda: { cardId: "ovAgendaCard", chevId: "ovAgendaChevron" },
+        todo: { cardId: "ovTodoCard", chevId: "ovTodoChevron" },
+        media: { cardId: "ovMediaCard", chevId: "ovMediaChevron" },
+        pc: { cardId: "ovPcCard", chevId: "ovPcChevron" }
+      };
+
+      function computeCollapseStates() {
+        const todoEmpty = !Array.isArray(dashboard.todos) || dashboard.todos.length === 0;
+        const agendaEmpty = lastUpcomingCount === 0;
+        return {
+          todo: manualCollapse.todo !== null ? manualCollapse.todo : todoEmpty,
+          agenda: manualCollapse.agenda !== null ? manualCollapse.agenda : (agendaEmpty && !todoEmpty),
+          media: manualCollapse.media !== null ? manualCollapse.media : false,
+          pc: manualCollapse.pc !== null ? manualCollapse.pc : false
+        };
+      }
+
+      function applyOverviewLayoutState() {
+        const states = computeCollapseStates();
+        for (const [key, cfg] of Object.entries(COLLAPSE_CARDS)) {
+          const card = el(cfg.cardId);
+          const chev = el(cfg.chevId);
+          const collapsed = Boolean(states[key]);
+          if (card) card.classList.toggle("is-collapsed", collapsed);
+          if (chev) chev.textContent = collapsed ? "\u25B8" : "\u25BE";
+          const trigger = document.querySelector(`[data-collapse="${key}"]`);
+          if (trigger) trigger.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        }
+      }
+
+      function buildMiniCalendar(hintText) {
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth();
+        const today = now.getDate();
+        const firstDow = new Date(year, month, 1).getDay();
+        const daysInMonth = new Date(year, month + 1, 0).getDate();
+        const prevLastDay = new Date(year, month, 0).getDate();
+        const weekRows = Math.ceil((firstDow + daysInMonth) / 7);
+        const totalCells = weekRows * 7;
+
+        const wrap = document.createElement("div");
+        wrap.className = "mini-cal";
+
+        const head = document.createElement("div");
+        head.className = "mini-cal-head";
+        const monthEl = document.createElement("span");
+        monthEl.className = "mini-cal-month";
+        monthEl.textContent = now.toLocaleDateString("pt-BR", { month: "short", year: "numeric" });
+        const hintEl = document.createElement("span");
+        hintEl.className = "mini-cal-hint";
+        hintEl.textContent = hintText;
+        head.append(monthEl, hintEl);
+
+        const grid = document.createElement("div");
+        grid.className = "mini-cal-grid";
+        grid.style.gridTemplateRows = `11px repeat(${weekRows}, minmax(12px, 1fr))`;
+
+        for (const dow of ["D", "S", "T", "Q", "Q", "S", "S"]) {
+          const cell = document.createElement("div");
+          cell.className = "mini-cal-dow";
+          cell.textContent = dow;
+          grid.appendChild(cell);
+        }
+
+        for (let i = 0; i < totalCells; i++) {
+          const dayNum = i - firstDow + 1;
+          const cell = document.createElement("div");
+          cell.className = "mini-cal-day";
+          if (dayNum < 1) {
+            cell.classList.add("muted");
+            cell.textContent = String(prevLastDay + dayNum);
+          } else if (dayNum > daysInMonth) {
+            cell.classList.add("muted");
+            cell.textContent = String(dayNum - daysInMonth);
+          } else {
+            if (dayNum === today) cell.classList.add("today");
+            cell.textContent = String(dayNum);
+          }
+          grid.appendChild(cell);
+        }
+
+        wrap.append(head, grid);
+        return wrap;
+      }
+
       function updateClock() {
         const now = new Date();
         el("clockTime").textContent = now.toLocaleTimeString("pt-BR", {
@@ -1541,6 +1764,11 @@
           day: "2-digit",
           month: "short"
         });
+        const dayKey = getLocalDayKey(now);
+        if (lastCalendarDayKey && dayKey !== lastCalendarDayKey) {
+          renderAgenda();
+        }
+        lastCalendarDayKey = dayKey;
       }
 
       function parseEventTiming(ev) {
@@ -1616,30 +1844,30 @@
 
         const enriched = events.map((ev) => ({ ev, timing: parseEventTiming(ev) }));
         const upcoming = enriched.filter((x) => x.timing.state !== "past");
+        lastUpcomingCount = upcoming.length;
         ovBadge.textContent = `${upcoming.length} próx`;
 
         const agendaSig = JSON.stringify({
+          dayKey: getLocalDayKey(new Date()),
           configured: Boolean(ag.configured),
           count: events.length,
           items: enriched.map(({ ev, timing }) => [ev.title, timing.timeLabel, timing.relLabel, timing.state])
         });
-        if (agendaSig === lastAgendaSig) return;
+        if (agendaSig === lastAgendaSig) {
+          applyOverviewLayoutState();
+          return;
+        }
         lastAgendaSig = agendaSig;
 
         ovList.replaceChildren();
 
-        if (!ag.configured && events.length === 0) {
-          const empty = document.createElement("div");
-          empty.className = "empty-msg";
-          empty.textContent = "Configure sua agenda na aba Agenda & To-Do";
-          ovList.appendChild(empty);
-        } else if (upcoming.length === 0) {
-          const empty = document.createElement("div");
-          empty.className = "empty-msg";
-          empty.textContent = events.length ? "Sem mais compromissos hoje" : "Nenhum evento hoje";
-          ovList.appendChild(empty);
+        if (upcoming.length === 0) {
+          const hintText = (!ag.configured && events.length === 0)
+            ? "Sem .ics configurado"
+            : (events.length ? "Sem mais eventos hoje" : "Nenhum evento hoje");
+          ovList.appendChild(buildMiniCalendar(hintText));
         } else {
-          upcoming.slice(0, 3).forEach((item, idx) => {
+          upcoming.slice(0, 6).forEach((item, idx) => {
             const row = document.createElement("div");
             row.className = "agenda-mini-item" + (item.timing.state === "now" ? " now" : idx === 0 ? " next" : "");
             const tm = document.createElement("span");
@@ -1655,6 +1883,7 @@
             ovList.appendChild(row);
           });
         }
+        applyOverviewLayoutState();
 
         // Full Agenda list (View 3)
         const fullList = el("agendaFullList");
@@ -1708,7 +1937,10 @@
       function renderTodos() {
         const todos = Array.isArray(dashboard.todos) ? dashboard.todos : [];
         const sig = JSON.stringify(todos);
-        if (sig === lastTodosSig) return;
+        if (sig === lastTodosSig) {
+          applyOverviewLayoutState();
+          return;
+        }
         lastTodosSig = sig;
 
         const doneCount = todos.filter((t) => t.done).length;
@@ -1716,7 +1948,7 @@
         el("ovTodoBadge").textContent = badgeText;
         el("todoFullBadge").textContent = badgeText;
 
-        // Overview: open first, up to 3 items
+        // Overview: open first, up to 6 items
         const ovList = el("ovTodoList");
         ovList.replaceChildren();
         if (todos.length === 0) {
@@ -1728,7 +1960,7 @@
           const prioritized = [
             ...todos.filter((t) => !t.done),
             ...todos.filter((t) => t.done)
-          ].slice(0, 3);
+          ].slice(0, 6);
           for (const item of prioritized) {
             const btn = document.createElement("button");
             btn.type = "button";
@@ -1744,6 +1976,7 @@
             ovList.appendChild(btn);
           }
         }
+        applyOverviewLayoutState();
 
         // Full list (View 3)
         const fullList = el("todoFullList");
@@ -2507,6 +2740,23 @@
       }
 
       // Event bindings
+      document.querySelectorAll("[data-collapse]").forEach((trigger) => {
+        const toggle = () => {
+          const key = trigger.getAttribute("data-collapse");
+          if (!(key in manualCollapse)) return;
+          const states = computeCollapseStates();
+          manualCollapse[key] = !states[key];
+          applyOverviewLayoutState();
+        };
+        trigger.addEventListener("click", toggle);
+        trigger.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            ev.preventDefault();
+            toggle();
+          }
+        });
+      });
+
       document.querySelectorAll(".nav-btn[data-tab]").forEach((btn) => {
         btn.addEventListener("click", () => switchTab(btn.getAttribute("data-tab")));
       });
@@ -2667,6 +2917,8 @@
       // Boot
       updateClock();
       setInterval(updateClock, 10000);
+      renderAgenda();
+      renderTodos();
       renderFocusClock();
       token = loadToken();
       startStream();
