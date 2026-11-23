@@ -397,12 +397,21 @@ impl ConfigWatcher {
                         }
                         if let Ok(raw) = fs::read_to_string(&path) {
                             if last_content.as_deref() != Some(&raw) {
-                                if let Ok(cfg) = serde_json::from_str::<AppConfig>(&raw) {
-                                    last_content = Some(raw);
-                                    if let Ok(mut g) = live_clone.write() {
-                                        *g = cfg.clone();
+                                match serde_json::from_str::<AppConfig>(&raw) {
+                                    Ok(cfg) => {
+                                        last_content = Some(raw);
+                                        if let Ok(mut g) = live_clone.write() {
+                                            *g = cfg.clone();
+                                        }
+                                        let _ = tx.send(cfg);
                                     }
-                                    let _ = tx.send(cfg);
+                                    Err(err) => {
+                                        eprintln!(
+                                            "Aviso: falha ao recarregar config {}: {err}",
+                                            path.display()
+                                        );
+                                        last_content = Some(raw);
+                                    }
                                 }
                             }
                         }

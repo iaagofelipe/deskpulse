@@ -602,9 +602,21 @@ async fn system_lock_handler() -> Response {
         let mut cmd = tokio::process::Command::new("rundll32.exe");
         cmd.args(["user32.dll,LockWorkStation"]);
         cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
-        let _ = cmd.spawn();
+        match cmd.spawn() {
+            Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+            Err(err) => json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to lock workstation: {err}"),
+            ),
+        }
     }
-    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
+    #[cfg(not(windows))]
+    {
+        json_error(
+            StatusCode::NOT_IMPLEMENTED,
+            "lock workstation is only supported on Windows",
+        )
+    }
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -744,10 +756,9 @@ mod tests {
         
         let config_live = Arc::new(std::sync::RwLock::new(initial_cfg.clone()));
         
-        let rx_for_net = watch::channel(false).1;
-        let network = Arc::new(crate::monitors::network::NetworkMonitor::spawn(dir.path().join("net.json"), rx_for_net.clone()));
-        let weather = Arc::new(crate::monitors::weather::WeatherMonitor::spawn(initial_cfg.weather.clone(), rx_for_net.clone()));
-        let github = Arc::new(crate::monitors::github::GithubMonitor::spawn(initial_cfg.github.clone(), rx_for_net.clone()));
+        let network = Arc::new(crate::monitors::network::NetworkMonitor::spawn(dir.path().join("net.json"), rx.clone()));
+        let weather = Arc::new(crate::monitors::weather::WeatherMonitor::spawn(initial_cfg.weather.clone(), rx.clone()));
+        let github = Arc::new(crate::monitors::github::GithubMonitor::spawn(initial_cfg.github.clone(), rx.clone()));
         let shortcuts = Arc::new(crate::shortcuts::ShortcutRunner::new(initial_cfg.shortcuts.clone()));
 
         let state = AppState {

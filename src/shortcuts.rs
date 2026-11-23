@@ -263,9 +263,9 @@ fn open_url(url: &str) -> Result<(), ShortcutError> {
 fn open_folder(path: &str) -> Result<(), ShortcutError> {
     let expanded = expand_env_vars(path);
     let p = std::path::Path::new(&expanded);
-    if !p.exists() {
+    if !p.is_dir() {
         return Err(ShortcutError::Invalid(format!(
-            "Pasta não encontrada: {expanded}"
+            "Pasta não encontrada ou não é um diretório: {expanded}"
         )));
     }
     let mut cmd = std::process::Command::new("explorer.exe");
@@ -635,6 +635,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_trigger_invalid_url_and_missing_folder() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let regular_file = temp_dir.path().join("not_a_dir.txt");
+        std::fs::write(&regular_file, b"hello").expect("write temp file");
+
         let tiles = vec![
             ShortcutConfig {
                 id: "bad_url".to_string(),
@@ -654,6 +658,15 @@ mod tests {
                     path: "Z:\\this\\path\\does\\not\\exist\\12345".to_string(),
                 },
             },
+            ShortcutConfig {
+                id: "file_not_folder".to_string(),
+                label: "File Not Folder".to_string(),
+                icon: "folder".to_string(),
+                color: "#000".to_string(),
+                action: ShortcutAction::Folder {
+                    path: regular_file.to_string_lossy().into_owned(),
+                },
+            },
         ];
         let runner = ShortcutRunner::new(tiles);
         let media: Arc<dyn MediaBackend> = Arc::new(WindowsMediaBackend::new());
@@ -663,5 +676,8 @@ mod tests {
 
         let res_folder = runner.trigger("bad_folder", &media).await;
         assert!(matches!(res_folder, Err(ShortcutError::Invalid(_))));
+
+        let res_file = runner.trigger("file_not_folder", &media).await;
+        assert!(matches!(res_file, Err(ShortcutError::Invalid(_))));
     }
 }

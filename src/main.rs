@@ -180,7 +180,14 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
     ));
     let shortcuts = Arc::new(crate::shortcuts::ShortcutRunner::new(initial_cfg.shortcuts.clone()));
     let remote_approval_enabled = Arc::new(AtomicBool::new(initial_cfg.remote_approval_enabled));
-    
+    let calendar_ics_url = Arc::new(Mutex::new(
+        initial_cfg
+            .calendar_ics_url
+            .clone()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+    ));
+
     // Background watcher
     let mut shutdown_rx_bg = shutdown_rx.clone();
     let weather_clone = Arc::clone(&weather);
@@ -189,20 +196,42 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
     let antigravity_clone = Arc::clone(&antigravity);
     let agenda_clone = Arc::clone(&agenda);
     let remote_approval_enabled_clone = Arc::clone(&remote_approval_enabled);
-    
+    let calendar_ics_url_clone = Arc::clone(&calendar_ics_url);
+
     tokio::spawn(async move {
         loop {
             tokio::select! {
                 _ = shutdown_rx_bg.changed() => break,
                 res = cfg_watcher.changed() => {
-                    if let Ok(_) = res {
+                    if res.is_ok() {
                         let new_cfg = cfg_watcher.borrow_and_update().clone();
                         weather_clone.update_config(new_cfg.weather.clone());
                         github_clone.update_config(new_cfg.github.clone());
                         shortcuts_clone.update_config(new_cfg.shortcuts.clone());
                         antigravity_clone.update_budgets(new_cfg.ai.budget_5h_tokens, new_cfg.ai.budget_weekly_tokens);
-                        agenda_clone.set_ics_url(new_cfg.calendar_ics_url.clone());
                         remote_approval_enabled_clone.store(new_cfg.remote_approval_enabled, std::sync::atomic::Ordering::Relaxed);
+
+                        let next_ics = new_cfg
+                            .calendar_ics_url
+                            .clone()
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty());
+                        let ics_changed = if let Ok(mut guard) = calendar_ics_url_clone.lock() {
+                            if *guard != next_ics {
+                                *guard = next_ics.clone();
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if ics_changed {
+                            agenda_clone.set_ics_url(next_ics.clone());
+                            if next_ics.is_some() {
+                                let _ = agenda_clone.refresh_now().await;
+                            }
+                        }
                     } else {
                         break;
                     }
@@ -224,7 +253,7 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
         agenda,
         todos,
         remote_approval_enabled,
-        calendar_ics_url: Arc::new(Mutex::new(initial_cfg.calendar_ics_url.clone())),
+        calendar_ics_url,
         network,
         weather,
         github,

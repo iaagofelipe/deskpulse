@@ -53,6 +53,7 @@ function buildConfiguredHtml(ctx, gh) {
   const total = Math.max(0, Number(gh.total_contributions || 0));
   const commits = Math.max(0, Number(gh.commits || 0));
   const priv = Math.max(0, Number(gh.private_contributions || 0));
+  const prs = Math.max(0, Number(gh.prs || 0));
   const issues = Math.max(0, Number(gh.issues || 0));
   const currentStreak = Math.max(0, Number(gh.current_streak || 0));
   const longestStreak = Math.max(0, Number(gh.longest_streak || 0));
@@ -66,7 +67,7 @@ function buildConfiguredHtml(ctx, gh) {
   const weeks = Array.isArray(gh.weeks) ? gh.weeks : [];
   const errorMsg = String(gh.error || '').trim();
 
-  const summaryText = `${formatCompactNumber(total)} contribuições • ${formatCompactNumber(commits)} commits • ${formatCompactNumber(priv)} privados • ${formatCompactNumber(issues)} issues`;
+  const summaryText = `${formatCompactNumber(total)} contribuições • ${formatCompactNumber(commits)} commits • ${formatCompactNumber(priv)} privados • ${formatCompactNumber(prs)} PRs • ${formatCompactNumber(issues)} issues`;
 
   const heatmapSvg = charts.renderGithubHeatmap({
     weeks,
@@ -213,6 +214,7 @@ export function render(ctx) {
     gh.total_contributions || 0,
     gh.commits || 0,
     gh.private_contributions || 0,
+    gh.prs || 0,
     gh.issues || 0,
     gh.current_streak || 0,
     gh.longest_streak || 0,

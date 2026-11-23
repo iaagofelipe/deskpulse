@@ -114,7 +114,7 @@ export function render(ctx) {
       grid.innerHTML = `
         ${ctx.icons.icon('shortcuts', 36)}
         <div class="empty-state-title">Nenhum atalho configurado</div>
-        <div class="empty-state-sub">Adicione blocos [[shortcuts]] em config.toml para controlar apps, hotkeys e áudio no estilo Stream Deck.</div>`;
+        <div class="empty-state-sub">Adicione atalhos em "shortcuts" no config.json para controlar apps, hotkeys e áudio no estilo Stream Deck.</div>`;
       pager.classList.add('hidden');
       pager.innerHTML = '';
     }

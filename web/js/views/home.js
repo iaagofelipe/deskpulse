@@ -268,7 +268,7 @@ function getWeatherCardData(ctx) {
           ${icons.weatherIcon(1, 38)}
           <div class="bento-agenda-info">
             <div class="bento-agenda-title">Configurar clima</div>
-            <div class="bento-agenda-sub">Defina sua cidade em config.toml</div>
+            <div class="bento-agenda-sub">Defina weather.city em config.json</div>
           </div>
         </div>
       </div>`;

@@ -14,7 +14,7 @@
 2. **PC e Internet**: CPU, RAM, discos, GPU NVIDIA (`nvidia-smi`), histórico de 60 segundos, download/upload em tempo real, consumo de dados diário/mensal e latência (ping).
 3. **IA e Agentes**: consumo agregado de tokens (janelas de 5h e semanal com orçamentos opcionais em `config.json`) e monitor *Master–Detail* de sessões Antigravity (`~/.gemini/antigravity`), checklist (`task.md`), eventos e aprovação remota via hooks `PreToolUse`/`Stop`.
 4. **Agenda e Tarefas**: eventos de Hoje e dos próximos 7 dias via feed `.ics` (Google Agenda / iCalendar) e gaveta lateral de To-Dos sincronizados com a CLI.
-5. **Clima**: condições atuais, sensação térmica, umidade, vento, índice UV e previsão via Open-Meteo (sem necessidade de chave de API).
+5. **Clima**: condições atuais, sensação, umidade, vento e previsão via Open-Meteo (sem necessidade de chave de API).
 6. **Mídia**: player com capa, linha do tempo com *seek* interativo, controles WinRT (play/pause, faixa anterior/próxima) e volume/mudo de sistema e microfone via WASAPI.
 7. **GitHub**: contribuições, sequência (*streak*), PRs e atividade via GitHub GraphQL API (lê `github.token` ou variável de ambiente como `GITHUB_TOKEN`).
 8. **Atalhos**: grade estilo Stream Deck configurável no `config.json` (mudo de mic/som, volume, mídia, captura `Win+Shift+S`, abrir apps, URLs, pastas e travar PC).

@@ -184,7 +184,16 @@ impl NetworkMonitor {
                     return;
                 }
 
-                let sample = probe_tcp_connect().await;
+                let sample = tokio::select! {
+                    s = probe_tcp_connect() => s,
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
+                            let _ = save_usage_atomic(&usage_path_bg, &usage_file);
+                            return;
+                        }
+                        probe_tcp_connect().await
+                    }
+                };
                 history_ms.push(sample);
                 while history_ms.len() > 60 {
                     history_ms.remove(0);
@@ -251,8 +260,8 @@ impl NetworkMonitor {
 
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(2)) => {}
-                    _ = shutdown.changed() => {
-                        if *shutdown.borrow() {
+                    changed = shutdown.changed() => {
+                        if changed.is_err() || *shutdown.borrow() {
                             let _ = save_usage_atomic(&usage_path_bg, &usage_file);
                             return;
                         }
@@ -440,5 +449,30 @@ mod tests {
             err_msg
         );
         let _ = tx.send(true);
+    }
+
+    #[tokio::test]
+    async fn test_network_monitor_exits_cleanly_when_shutdown_sender_dropped() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("net_usage.json");
+        let (tx, rx) = watch::channel(false);
+        let mon = NetworkMonitor::spawn(path.clone(), rx);
+
+        // Give the spawned task a turn to enter its loop, then drop the sender
+        tokio::task::yield_now().await;
+        drop(tx);
+
+        // The background task holds the only other Arc clone of `mon.snapshot`
+        // and saves `net_usage.json` right before returning.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Arc::strong_count(&mon.snapshot) > 1 {
+            if Instant::now() >= deadline {
+                panic!("NetworkMonitor background task did not exit after shutdown sender was dropped");
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        assert_eq!(Arc::strong_count(&mon.snapshot), 1);
+        assert!(path.exists(), "expected usage file to be saved on clean exit");
     }
 }

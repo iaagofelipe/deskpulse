@@ -809,6 +809,8 @@ impl AntigravityMonitor {
                         if let Ok(mut w) = ai_latest_bg.write() {
                             *w = ai_snap;
                         }
+                    } else if let Ok(mut w) = ai_latest_bg.write() {
+                        w.sessions = snap.sessions;
                     }
                 }
             });
