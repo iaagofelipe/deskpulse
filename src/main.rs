@@ -230,6 +230,7 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
         github,
         shortcuts,
         config_live,
+        shutdown: shutdown_rx.clone(),
     });
 
     let _tray_handle: Option<tray::TrayHandle> = if !no_tray {
@@ -260,10 +261,13 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
     );
 
     let mut server_shutdown_rx = shutdown_rx.clone();
+    let shutdown_tx_sig = shutdown_tx.clone();
     let result = axum::serve(listener, app)
         .with_graceful_shutdown(async move {
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
+                _ = tokio::signal::ctrl_c() => {
+                    let _ = shutdown_tx_sig.send(true);
+                }
                 _ = async {
                     loop {
                         if *server_shutdown_rx.borrow() {

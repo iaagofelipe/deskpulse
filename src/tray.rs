@@ -67,7 +67,8 @@ mod platform {
     use std::ffi::c_void;
     use std::os::windows::process::CommandExt;
     use std::process::Command;
-    use std::sync::mpsc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{mpsc, Arc};
     use std::thread::{self, JoinHandle};
 
     use windows::core::{w, PCWSTR};
@@ -98,6 +99,8 @@ mod platform {
 
     struct TrayThreadState {
         opts: TrayOptions,
+        closed: Arc<AtomicBool>,
+        icon_removed: Arc<AtomicBool>,
     }
 
     thread_local! {
@@ -106,19 +109,22 @@ mod platform {
 
     pub struct TrayHandle {
         hwnd: isize,
+        closed: Arc<AtomicBool>,
+        icon_removed: Arc<AtomicBool>,
         thread: Option<JoinHandle<()>>,
     }
 
     impl Drop for TrayHandle {
         fn drop(&mut self) {
-            if self.hwnd != 0 {
+            if self.hwnd != 0 && !self.closed.load(Ordering::Acquire) {
                 let hwnd = HWND(self.hwnd as *mut c_void);
                 unsafe {
-                    remove_tray_icon(hwnd);
+                    remove_tray_icon_once(hwnd, &self.icon_removed);
                     let _ = PostMessageW(hwnd, WM_CANCELMODE, WPARAM(0), LPARAM(0));
                     let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
             }
+            self.hwnd = 0;
             if let Some(handle) = self.thread.take() {
                 let _ = handle.join();
             }
@@ -127,15 +133,23 @@ mod platform {
 
     pub fn spawn_tray(opts: TrayOptions) -> Result<TrayHandle, String> {
         let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<isize, String>>(1);
+        let closed = Arc::new(AtomicBool::new(false));
+        let icon_removed = Arc::new(AtomicBool::new(false));
+        let closed_thread = Arc::clone(&closed);
+        let icon_removed_thread = Arc::clone(&icon_removed);
 
         let thread = thread::Builder::new()
             .name("deskpulse-tray".to_string())
-            .spawn(move || run_tray_thread(opts, ready_tx))
+            .spawn(move || {
+                run_tray_thread(opts, closed_thread, icon_removed_thread, ready_tx);
+            })
             .map_err(|e| format!("failed to spawn tray thread: {e}"))?;
 
         match ready_rx.recv() {
             Ok(Ok(hwnd)) => Ok(TrayHandle {
                 hwnd,
+                closed,
+                icon_removed,
                 thread: Some(thread),
             }),
             Ok(Err(err)) => {
@@ -149,7 +163,12 @@ mod platform {
         }
     }
 
-    fn run_tray_thread(opts: TrayOptions, ready_tx: mpsc::SyncSender<Result<isize, String>>) {
+    fn run_tray_thread(
+        opts: TrayOptions,
+        closed: Arc<AtomicBool>,
+        icon_removed: Arc<AtomicBool>,
+        ready_tx: mpsc::SyncSender<Result<isize, String>>,
+    ) {
         unsafe {
             let hmodule = match GetModuleHandleW(None) {
                 Ok(m) => m,
@@ -224,18 +243,23 @@ mod platform {
             }
 
             TRAY_STATE.with(|cell| {
-                *cell.borrow_mut() = Some(TrayThreadState { opts });
+                *cell.borrow_mut() = Some(TrayThreadState {
+                    opts,
+                    closed: Arc::clone(&closed),
+                    icon_removed: Arc::clone(&icon_removed),
+                });
             });
 
             let _ = ready_tx.send(Ok(hwnd.0 as isize));
 
             let mut msg = MSG::default();
-            while GetMessageW(&mut msg, HWND(std::ptr::null_mut()), 0, 0).as_bool() {
+            while GetMessageW(&mut msg, HWND(std::ptr::null_mut()), 0, 0).0 > 0 {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
 
-            remove_tray_icon(hwnd);
+            closed.store(true, Ordering::Release);
+            remove_tray_icon_once(hwnd, &icon_removed);
             if owns_icon && !icon.is_invalid() {
                 let _ = DestroyIcon(icon);
             }
@@ -245,14 +269,16 @@ mod platform {
         }
     }
 
-    unsafe fn remove_tray_icon(hwnd: HWND) {
-        let nid = NOTIFYICONDATAW {
-            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-            hWnd: hwnd,
-            uID: TRAY_ICON_UID,
-            ..Default::default()
-        };
-        let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
+    unsafe fn remove_tray_icon_once(hwnd: HWND, icon_removed: &AtomicBool) {
+        if !icon_removed.swap(true, Ordering::AcqRel) {
+            let nid = NOTIFYICONDATAW {
+                cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+                hWnd: hwnd,
+                uID: TRAY_ICON_UID,
+                ..Default::default()
+            };
+            let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
+        }
     }
 
     unsafe fn create_pulse_icon() -> Option<(HICON, bool)> {
@@ -320,7 +346,14 @@ mod platform {
             draw_thick_segment(pixels, SIZE, pair[0], pair[1], 0xFF22_D3EE);
         }
 
-        let mask_bmp = CreateBitmap(SIZE, SIZE, 1, 1, None);
+        let mask_bits = [0u8; ((SIZE * SIZE) / 8) as usize];
+        let mask_bmp = CreateBitmap(
+            SIZE,
+            SIZE,
+            1,
+            1,
+            Some(mask_bits.as_ptr() as *const c_void),
+        );
         if mask_bmp.is_invalid() {
             let _ = DeleteObject(color_bmp);
             let _ = DeleteDC(dc);
@@ -422,7 +455,6 @@ mod platform {
             TrayAction::Quit => {
                 let _ = shutdown_tx.send(true);
                 unsafe {
-                    remove_tray_icon(hwnd);
                     let _ = DestroyWindow(hwnd);
                 }
             }
@@ -513,12 +545,16 @@ mod platform {
                 }
             }
             WM_CLOSE => {
-                remove_tray_icon(hwnd);
                 let _ = DestroyWindow(hwnd);
                 LRESULT(0)
             }
             WM_DESTROY => {
-                remove_tray_icon(hwnd);
+                TRAY_STATE.with(|cell| {
+                    if let Some(state) = cell.borrow().as_ref() {
+                        state.closed.store(true, Ordering::Release);
+                        remove_tray_icon_once(hwnd, &state.icon_removed);
+                    }
+                });
                 PostQuitMessage(0);
                 LRESULT(0)
             }

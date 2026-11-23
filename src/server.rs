@@ -33,7 +33,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 
 static INDEX_HTML: &str = include_str!("../web/index.html");
 static MANIFEST_JSON: &str = include_str!("../assets/manifest.webmanifest");
@@ -62,6 +62,7 @@ pub struct AppState {
     pub github: Arc<GithubMonitor>,
     pub shortcuts: Arc<ShortcutRunner>,
     pub config_live: Arc<std::sync::RwLock<AppConfig>>,
+    pub shutdown: watch::Receiver<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -197,24 +198,40 @@ async fn stream_handler(
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
     state.events.touch_client();
     let rx = state.events.subscribe();
+    let shutdown = state.shutdown.clone();
     let interval = tokio::time::interval(Duration::from_secs(1));
 
     let stream = futures_util::stream::unfold(
-        (state, rx, interval, true),
-        |(state, mut rx, mut interval, send_initial)| async move {
+        (state, rx, shutdown, interval, true),
+        |(state, mut rx, mut shutdown, mut interval, send_initial)| async move {
+            if *shutdown.borrow() {
+                return None;
+            }
+
             if send_initial {
                 interval.tick().await;
+                if *shutdown.borrow() {
+                    return None;
+                }
                 let snap = collect_dashboard_state(&state).await;
                 let ev = Event::default()
                     .event("state")
                     .json_data(snap)
                     .unwrap_or_else(|_| Event::default().event("state").data("{}"));
-                return Some((Ok(ev), (state, rx, interval, false)));
+                return Some((Ok(ev), (state, rx, shutdown, interval, false)));
             }
 
             loop {
+                if *shutdown.borrow() {
+                    return None;
+                }
                 tokio::select! {
                     biased;
+                    res = shutdown.changed() => {
+                        if res.is_err() || *shutdown.borrow() {
+                            return None;
+                        }
+                    }
                     msg = rx.recv() => {
                         match msg {
                             Ok(StreamEvent::Notify(n)) => {
@@ -222,21 +239,21 @@ async fn stream_handler(
                                     .event("notify")
                                     .json_data(n)
                                     .unwrap_or_else(|_| Event::default().event("notify").data("{}"));
-                                return Some((Ok(ev), (state, rx, interval, false)));
+                                return Some((Ok(ev), (state, rx, shutdown, interval, false)));
                             }
                             Ok(StreamEvent::ApprovalPending(req)) => {
                                 let ev = Event::default()
                                     .event("approval")
                                     .json_data(req)
                                     .unwrap_or_else(|_| Event::default().event("approval").data("{}"));
-                                return Some((Ok(ev), (state, rx, interval, false)));
+                                return Some((Ok(ev), (state, rx, shutdown, interval, false)));
                             }
                             Ok(StreamEvent::ApprovalDone { id }) => {
                                 let ev = Event::default()
                                     .event("approval-done")
                                     .json_data(json!({ "id": id }))
                                     .unwrap_or_else(|_| Event::default().event("approval-done").data("{}"));
-                                return Some((Ok(ev), (state, rx, interval, false)));
+                                return Some((Ok(ev), (state, rx, shutdown, interval, false)));
                             }
                             Err(broadcast::error::RecvError::Lagged(_)) => continue,
                             Err(broadcast::error::RecvError::Closed) => return None,
@@ -249,7 +266,7 @@ async fn stream_handler(
                             .event("state")
                             .json_data(snap)
                             .unwrap_or_else(|_| Event::default().event("state").data("{}"));
-                        return Some((Ok(ev), (state, rx, interval, false)));
+                        return Some((Ok(ev), (state, rx, shutdown, interval, false)));
                     }
                 }
             }
@@ -701,7 +718,7 @@ mod tests {
         let adb = Arc::new(AdbBridge::spawn(8765, rx.clone()));
         let antigravity = Arc::new(AntigravityMonitor::spawn_for_dir(
             dir.path().join("antigravity"),
-            rx,
+            rx.clone(),
         ));
         let agenda = Arc::new(AgendaStore::new(
             dir.path().join("agenda_push.json"),
@@ -752,6 +769,7 @@ mod tests {
             github,
             shortcuts,
             config_live,
+            shutdown: rx,
         };
         (state, mock_media, tx, dir)
     }
@@ -1736,5 +1754,52 @@ mod tests {
                 "{path} must export function render"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_sse_stream_terminates_on_shutdown() {
+        let (state, _media, tx, _dir) = make_test_state();
+        let app = build_router(state);
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/stream")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let mut body = resp.into_body();
+        let first_frame = tokio::time::timeout(Duration::from_secs(2), body.frame())
+            .await
+            .expect("timed out waiting for initial SSE frame");
+        let first_bytes = first_frame
+            .expect("stream ended before initial frame")
+            .expect("frame error")
+            .into_data()
+            .expect("expected data frame");
+        let first_text = String::from_utf8_lossy(&first_bytes);
+        assert!(
+            first_text.contains("event: state"),
+            "expected initial SSE state event, got: {first_text}"
+        );
+
+        let _ = tx.send(true);
+
+        let drained = tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(frame) = body.frame().await {
+                frame.expect("unexpected body error during shutdown");
+            }
+        })
+        .await;
+        assert!(
+            drained.is_ok(),
+            "SSE stream did not terminate promptly after shutdown signal"
+        );
     }
 }
