@@ -596,6 +596,7 @@ mod tests {
                     artwork_data_url: None,
                     volume_pct: 55,
                     muted: false,
+                    ..MediaSnapshot::default()
                 }),
                 commands: Mutex::new(Vec::new()),
             }

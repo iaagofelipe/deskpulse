@@ -13,8 +13,25 @@ use windows::Media::Control::{
 };
 use windows::Storage::Streams::DataReader;
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
-use windows::Win32::Media::Audio::{eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator};
+use windows::Win32::Media::Audio::{
+    eCapture, eCommunications, eConsole, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
+};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_ALL, COINIT_MULTITHREADED};
+
+pub const TICKS_PER_SECOND: i64 = 10_000_000;
+
+pub fn ticks_to_secs(ticks: i64) -> Option<u64> {
+    if ticks < 0 {
+        None
+    } else {
+        Some((ticks / TICKS_PER_SECOND) as u64)
+    }
+}
+
+pub fn secs_to_ticks(secs: u64) -> i64 {
+    let max_secs = (i64::MAX / TICKS_PER_SECOND) as u64;
+    (secs.min(max_secs) as i64) * TICKS_PER_SECOND
+}
 
 #[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
 pub struct MediaSnapshot {
@@ -22,10 +39,15 @@ pub struct MediaSnapshot {
     pub status: String,
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub app: String,
     pub artwork_data_url: Option<String>,
     pub volume_pct: u8,
     pub muted: bool,
+    pub position_secs: Option<u64>,
+    pub duration_secs: Option<u64>,
+    pub can_seek: bool,
+    pub mic_muted: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +59,8 @@ pub enum MediaCommand {
     Unmute,
     ToggleMute,
     SetVolume(u8),
+    Seek(u64),
+    ToggleMicMute,
 }
 
 pub fn parse_media_command(action: &str, level: Option<i32>) -> Result<MediaCommand, String> {
@@ -51,6 +75,11 @@ pub fn parse_media_command(action: &str, level: Option<i32>) -> Result<MediaComm
             let v = level.ok_or_else(|| "missing volume level".to_string())?;
             Ok(MediaCommand::SetVolume(v.clamp(0, 100) as u8))
         }
+        "seek" => {
+            let v = level.ok_or_else(|| "missing seek position".to_string())?;
+            Ok(MediaCommand::Seek(v.max(0) as u64))
+        }
+        "toggle-mic" | "toggle-mic-mute" => Ok(MediaCommand::ToggleMicMute),
         other => Err(format!("unknown media action: {other}")),
     }
 }
@@ -86,6 +115,21 @@ fn endpoint_volume() -> Result<IAudioEndpointVolume, String> {
     }
 }
 
+fn capture_endpoint_volume() -> Result<IAudioEndpointVolume, String> {
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
+                .map_err(|e| format!("IMMDeviceEnumerator failed: {e}"))?;
+        let device = enumerator
+            .GetDefaultAudioEndpoint(eCapture, eConsole)
+            .or_else(|_| enumerator.GetDefaultAudioEndpoint(eCapture, eCommunications))
+            .map_err(|e| format!("GetDefaultAudioEndpoint capture failed: {e}"))?;
+        device
+            .Activate(CLSCTX_ALL, None)
+            .map_err(|e| format!("IAudioEndpointVolume activate failed: {e}"))
+    }
+}
+
 fn read_audio_state() -> (u8, bool) {
     let Ok(vol) = endpoint_volume() else {
         return (0, false);
@@ -95,6 +139,24 @@ fn read_audio_state() -> (u8, bool) {
         .map(|b| b.as_bool())
         .unwrap_or(false);
     (((scalar * 100.0).round().clamp(0.0, 100.0)) as u8, muted)
+}
+
+fn read_mic_muted_state() -> bool {
+    let Ok(vol) = capture_endpoint_volume() else {
+        return false;
+    };
+    unsafe { vol.GetMute() }
+        .map(|b| b.as_bool())
+        .unwrap_or(false)
+}
+
+fn toggle_mic_mute() -> Result<(), String> {
+    let vol = capture_endpoint_volume()?;
+    unsafe {
+        let current = vol.GetMute().map(|b| b.as_bool()).unwrap_or(false);
+        vol.SetMute(!current, &GUID::zeroed())
+            .map_err(|e| format!("SetMute mic toggle failed: {e}"))
+    }
 }
 
 fn apply_audio_command(cmd: MediaCommand) -> Result<(), String> {
@@ -164,16 +226,22 @@ fn current_session() -> Option<GlobalSystemMediaTransportControlsSession> {
 
 fn collect_media_snapshot(artwork_cache: &mut HashMap<(String, String, String), Option<String>>) -> MediaSnapshot {
     let (volume_pct, muted) = read_audio_state();
+    let mic_muted = read_mic_muted_state();
     let Some(session) = current_session() else {
         return MediaSnapshot {
             playing: false,
             status: "Idle".to_string(),
             title: String::new(),
             artist: String::new(),
+            album: String::new(),
             app: String::new(),
             artwork_data_url: None,
             volume_pct,
             muted,
+            position_secs: None,
+            duration_secs: None,
+            can_seek: false,
+            mic_muted,
         };
     };
 
@@ -197,9 +265,10 @@ fn collect_media_snapshot(artwork_cache: &mut HashMap<(String, String, String), 
         .to_string();
 
     let props_opt = session.TryGetMediaPropertiesAsync().ok().and_then(|op| op.get().ok());
-    let (title, artist, artwork_data_url) = if let Some(ref props) = props_opt {
+    let (title, artist, album, artwork_data_url) = if let Some(ref props) = props_opt {
         let title = props.Title().map(|h| h.to_string()).unwrap_or_default();
         let artist = props.Artist().map(|h| h.to_string()).unwrap_or_default();
+        let album = props.AlbumTitle().map(|h| h.to_string()).unwrap_or_default();
         let key = (app.clone(), title.clone(), artist.clone());
         let art = if let Some(cached) = artwork_cache.get(&key) {
             cached.clone()
@@ -211,20 +280,34 @@ fn collect_media_snapshot(artwork_cache: &mut HashMap<(String, String, String), 
             artwork_cache.insert(key, fetched.clone());
             fetched
         };
-        (title, artist, art)
+        (title, artist, album, art)
     } else {
-        (String::new(), String::new(), None)
+        (String::new(), String::new(), String::new(), None)
     };
+
+    let (position_secs, duration_secs) = if let Ok(timeline) = session.GetTimelineProperties() {
+        let pos = timeline.Position().ok().and_then(|t| ticks_to_secs(t.Duration));
+        let dur = timeline.EndTime().ok().and_then(|t| ticks_to_secs(t.Duration));
+        (pos, dur)
+    } else {
+        (None, None)
+    };
+    let can_seek = duration_secs.is_some_and(|d| d > 0);
 
     MediaSnapshot {
         playing,
         status: status.to_string(),
         title,
         artist,
+        album,
         app,
         artwork_data_url,
         volume_pct,
         muted,
+        position_secs,
+        duration_secs,
+        can_seek,
+        mic_muted,
     }
 }
 
@@ -234,6 +317,22 @@ fn run_media_command(cmd: MediaCommand) -> Result<(), String> {
         | MediaCommand::Unmute
         | MediaCommand::ToggleMute
         | MediaCommand::SetVolume(_) => apply_audio_command(cmd),
+        MediaCommand::ToggleMicMute => toggle_mic_mute(),
+        MediaCommand::Seek(secs) => {
+            let Some(session) = current_session() else {
+                return Err("no active media session".to_string());
+            };
+            let ticks = secs_to_ticks(secs);
+            let ok = session
+                .TryChangePlaybackPositionAsync(ticks)
+                .and_then(|op| op.get())
+                .map_err(|e| format!("TryChangePlaybackPositionAsync failed: {e}"))?;
+            if ok {
+                Ok(())
+            } else {
+                Err("seek command was not accepted".to_string())
+            }
+        }
         MediaCommand::PlayPause | MediaCommand::Next | MediaCommand::Previous => {
             let Some(session) = current_session() else {
                 return Err("no active media session".to_string());
@@ -346,6 +445,22 @@ mod tests {
         assert_eq!(parse_media_command("volume", Some(-10)).unwrap(), MediaCommand::SetVolume(0));
         assert!(parse_media_command("volume", None).is_err());
         assert!(parse_media_command("explode", None).is_err());
+    }
+
+    #[test]
+    fn test_parse_seek_and_mic_commands() {
+        assert_eq!(parse_media_command("seek", Some(75)), Ok(MediaCommand::Seek(75)));
+        assert!(parse_media_command("seek", None).is_err());
+        assert_eq!(parse_media_command("seek", Some(-5)), Ok(MediaCommand::Seek(0)));
+        assert_eq!(parse_media_command("toggle-mic", None), Ok(MediaCommand::ToggleMicMute));
+        assert_eq!(parse_media_command("toggle-mic-mute", None), Ok(MediaCommand::ToggleMicMute));
+    }
+
+    #[test]
+    fn test_winrt_timespan_tick_conversions() {
+        assert_eq!(ticks_to_secs(750_000_000), Some(75));
+        assert_eq!(ticks_to_secs(-1), None);
+        assert_eq!(secs_to_ticks(120), 1_200_000_000);
     }
 
     #[tokio::test]
