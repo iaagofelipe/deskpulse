@@ -42,8 +42,17 @@ pub enum TodoCommand {
 }
 
 #[derive(Debug, PartialEq, Eq)]
+pub enum StartupCommand {
+    Install,
+    Uninstall,
+    Status,
+}
+
+#[derive(Debug, PartialEq, Eq)]
 pub enum Command {
-    Serve,
+    Serve { no_tray: bool },
+    ConfigPath,
+    Startup(StartupCommand),
     HookPreTool,
     HookStop,
     InstallHooks,
@@ -59,7 +68,31 @@ where
 {
     let parts: Vec<String> = args.into_iter().map(|s| s.as_ref().to_string()).collect();
     match parts.get(1).map(String::as_str) {
-        None | Some("serve") if parts.len() <= 2 => Ok(Command::Serve),
+        None => Ok(Command::Serve { no_tray: false }),
+        Some("serve") => {
+            if parts.len() == 2 {
+                Ok(Command::Serve { no_tray: false })
+            } else if parts.len() == 3 && parts[2] == "--no-tray" {
+                Ok(Command::Serve { no_tray: true })
+            } else {
+                Err("usage: deskpulse serve [--no-tray]".to_string())
+            }
+        }
+        Some("config-path") => {
+            if parts.len() == 2 {
+                Ok(Command::ConfigPath)
+            } else {
+                Err("usage: deskpulse config-path".to_string())
+            }
+        }
+        Some("startup") => match parts.get(2).map(String::as_str) {
+            Some("install") if parts.len() == 3 => Ok(Command::Startup(StartupCommand::Install)),
+            Some("uninstall") if parts.len() == 3 => {
+                Ok(Command::Startup(StartupCommand::Uninstall))
+            }
+            Some("status") if parts.len() == 3 => Ok(Command::Startup(StartupCommand::Status)),
+            _ => Err("usage: deskpulse startup <install|uninstall|status>".to_string()),
+        },
         Some("hook") => match parts.get(2).map(String::as_str) {
             Some("pre-tool") if parts.len() == 3 => Ok(Command::HookPreTool),
             Some("stop") if parts.len() == 3 => Ok(Command::HookStop),
@@ -88,7 +121,7 @@ where
             ),
         },
         _ => Err(
-            "usage: deskpulse [serve|open|todo <list|add|done|rm>|hook <pre-tool|stop>|install-hooks|uninstall-hooks]"
+            "usage: deskpulse [serve [--no-tray]|config-path|startup <install|uninstall|status>|open|todo <list|add|done|rm>|hook <pre-tool|stop>|install-hooks|uninstall-hooks]"
                 .to_string(),
         ),
     }
@@ -270,11 +303,33 @@ async fn run_hook_command(kind: HookKind) {
 #[tokio::main]
 async fn main() {
     match parse_cli(env::args()) {
-        Ok(Command::Serve) => {
+        Ok(Command::Serve { no_tray }) => {
+            let _ = no_tray;
             if let Err(err) = run_serve().await {
                 eprintln!("{err}");
                 std::process::exit(1);
             }
+        }
+        Ok(Command::ConfigPath) => {
+            println!("{}", config::default_config_path().display());
+        }
+        Ok(Command::Startup(StartupCommand::Install)) => {
+            if let Err(err) = config::install_startup() {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+            println!("Auto-start do DeskPulse instalado com sucesso.");
+        }
+        Ok(Command::Startup(StartupCommand::Uninstall)) => {
+            if let Err(err) = config::uninstall_startup() {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+            println!("Auto-start do DeskPulse removido com sucesso.");
+        }
+        Ok(Command::Startup(StartupCommand::Status)) => {
+            let status = config::startup_status();
+            println!("Auto-start: {}", if status { "ativo" } else { "inativo" });
         }
         Ok(Command::HookPreTool) => run_hook_command(HookKind::PreTool).await,
         Ok(Command::HookStop) => run_hook_command(HookKind::Stop).await,
@@ -323,8 +378,14 @@ mod tests {
 
     #[test]
     fn parses_default_serve_command() {
-        assert_eq!(parse_cli(["deskpulse"]).unwrap(), Command::Serve);
-        assert_eq!(parse_cli(["deskpulse", "serve"]).unwrap(), Command::Serve);
+        assert_eq!(
+            parse_cli(["deskpulse"]).unwrap(),
+            Command::Serve { no_tray: false }
+        );
+        assert_eq!(
+            parse_cli(["deskpulse", "serve"]).unwrap(),
+            Command::Serve { no_tray: false }
+        );
         assert_eq!(
             parse_cli(["deskpulse", "hook", "pre-tool"]).unwrap(),
             Command::HookPreTool
@@ -370,5 +431,36 @@ mod tests {
         assert!(parse_cli(["deskpulse", "todo", "add"]).is_err());
         assert!(parse_cli(["deskpulse", "todo", "done"]).is_err());
         assert!(parse_cli(["deskpulse", "todo", "rm"]).is_err());
+    }
+
+    #[test]
+    fn test_parse_cli_v2_subcommands() {
+        assert_eq!(
+            parse_cli(["deskpulse", "serve", "--no-tray"]).unwrap(),
+            Command::Serve { no_tray: true }
+        );
+        assert_eq!(
+            parse_cli(["deskpulse", "config-path"]).unwrap(),
+            Command::ConfigPath
+        );
+        assert_eq!(
+            parse_cli(["deskpulse", "startup", "install"]).unwrap(),
+            Command::Startup(StartupCommand::Install)
+        );
+        assert_eq!(
+            parse_cli(["deskpulse", "startup", "uninstall"]).unwrap(),
+            Command::Startup(StartupCommand::Uninstall)
+        );
+        assert_eq!(
+            parse_cli(["deskpulse", "startup", "status"]).unwrap(),
+            Command::Startup(StartupCommand::Status)
+        );
+
+        // Invalid flags / unknown subcommands return Err
+        assert!(parse_cli(["deskpulse", "serve", "--unknown"]).is_err());
+        assert!(parse_cli(["deskpulse", "config-path", "extra"]).is_err());
+        assert!(parse_cli(["deskpulse", "startup"]).is_err());
+        assert!(parse_cli(["deskpulse", "startup", "invalid"]).is_err());
+        assert!(parse_cli(["deskpulse", "startup", "install", "extra"]).is_err());
     }
 }

@@ -460,13 +460,23 @@ async fn update_settings_handler(
             None => prev_ics,
         };
 
-        let cfg = AppConfig {
-            port: state.port,
-            token: state.token.clone(),
-            approval_timeout_secs: state.approval_timeout_secs,
-            calendar_ics_url: next_ics.clone(),
-            remote_approval_enabled: next_remote,
+        let mut cfg = if state.config_path.exists() {
+            crate::config::load_or_create(&state.config_path).unwrap_or_else(|_| AppConfig {
+                port: state.port,
+                token: state.token.clone(),
+                approval_timeout_secs: state.approval_timeout_secs,
+                ..AppConfig::default()
+            })
+        } else {
+            AppConfig {
+                port: state.port,
+                token: state.token.clone(),
+                approval_timeout_secs: state.approval_timeout_secs,
+                ..AppConfig::default()
+            }
         };
+        cfg.calendar_ics_url = next_ics.clone();
+        cfg.remote_approval_enabled = next_remote;
 
         if let Err(err) = save_config(&state.config_path, &cfg) {
             return json_error(StatusCode::INTERNAL_SERVER_ERROR, err);
@@ -1389,5 +1399,48 @@ mod tests {
         assert!(refresh_err_val["error"].is_string());
 
         let _ = closed_server.await;
+    }
+
+    #[tokio::test]
+    async fn test_update_settings_handler_preserves_v2_config_fields() {
+        let (state, _media, _tx, _dir) = make_test_state();
+        let cfg_path = state.config_path.clone();
+
+        // 1. Write a config with custom v2 fields
+        let mut custom_cfg = AppConfig::default();
+        custom_cfg.weather.city = "Campinas".to_string();
+        custom_cfg.github.username = Some("octocat".to_string());
+        custom_cfg.ai.budget_5h_tokens = Some(50_000);
+        custom_cfg.night_mode.start_hour = 22;
+        custom_cfg.shortcuts.truncate(3);
+        crate::config::save_config(&cfg_path, &custom_cfg).unwrap();
+
+        let app = build_router(state);
+
+        // 2. Call POST /api/settings to update only remote_approval_enabled
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/settings")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(r#"{"remote_approval_enabled":true}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // 3. Reload config from disk and assert all v2 fields were preserved
+        let reloaded = crate::config::load_or_create(&cfg_path).unwrap();
+        assert!(reloaded.remote_approval_enabled);
+        assert_eq!(reloaded.weather.city, "Campinas");
+        assert_eq!(reloaded.github.username, Some("octocat".to_string()));
+        assert_eq!(reloaded.ai.budget_5h_tokens, Some(50_000));
+        assert_eq!(reloaded.night_mode.start_hour, 22);
+        assert_eq!(reloaded.shortcuts.len(), 3);
     }
 }
