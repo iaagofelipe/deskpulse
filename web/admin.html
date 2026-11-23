@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b0e">
+  <title>DeskPulse Admin — Configurações</title>
+  <link rel="stylesheet" href="/assets/css/tokens.css">
+  <link rel="stylesheet" href="/assets/css/admin.css">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+</head>
+<body>
+  <div class="admin-shell">
+    <aside class="admin-sidebar" aria-label="Seções de configuração">
+      <div class="admin-brand">
+        <div class="brand-mark" aria-hidden="true">DP</div>
+        <div class="brand-text">
+          <div class="brand-name">DeskPulse</div>
+          <div class="brand-sub">Painel Admin · PC</div>
+        </div>
+      </div>
+
+      <nav class="admin-nav" role="tablist" aria-orientation="vertical">
+        <button type="button" class="admin-nav-btn active" data-section="general" role="tab" aria-selected="true">
+          <span class="nav-ico" data-icon="sliders"></span>
+          <span>Geral &amp; Aparência</span>
+        </button>
+        <button type="button" class="admin-nav-btn" data-section="weather" role="tab" aria-selected="false">
+          <span class="nav-ico" data-icon="weather"></span>
+          <span>Clima</span>
+        </button>
+        <button type="button" class="admin-nav-btn" data-section="github" role="tab" aria-selected="false">
+          <span class="nav-ico" data-icon="github"></span>
+          <span>GitHub</span>
+        </button>
+        <button type="button" class="admin-nav-btn" data-section="agenda" role="tab" aria-selected="false">
+          <span class="nav-ico" data-icon="agenda"></span>
+          <span>Agenda</span>
+        </button>
+        <button type="button" class="admin-nav-btn" data-section="ai" role="tab" aria-selected="false">
+          <span class="nav-ico" data-icon="ai"></span>
+          <span>IA &amp; Orçamentos</span>
+        </button>
+        <button type="button" class="admin-nav-btn" data-section="shortcuts" role="tab" aria-selected="false">
+          <span class="nav-ico" data-icon="shortcuts"></span>
+          <span>Atalhos (Stream Deck)</span>
+        </button>
+        <button type="button" class="admin-nav-btn" data-section="raw" role="tab" aria-selected="false">
+          <span class="nav-ico" data-icon="code"></span>
+          <span>JSON Bruto</span>
+        </button>
+      </nav>
+
+      <div class="admin-sidebar-foot">
+        <div class="status-card">
+          <div class="status-row">
+            <span class="status-dot" id="serverDot"></span>
+            <span id="serverStatusText">Conectando…</span>
+          </div>
+          <div class="status-row">
+            <span class="status-dot" id="usbDot"></span>
+            <span id="usbStatusText">Verificando USB…</span>
+          </div>
+          <div class="status-path" id="configPathText" title=""></div>
+        </div>
+
+        <div class="quick-actions">
+          <button type="button" class="btn btn-secondary" id="openPhoneBtn">
+            <span class="btn-ico" data-icon="usb"></span>
+            <span>Abrir no Celular</span>
+          </button>
+          <button type="button" class="btn btn-secondary" id="restartAdbBtn">
+            <span class="btn-ico" data-icon="refresh"></span>
+            <span>Reiniciar ADB</span>
+          </button>
+          <a class="btn btn-ghost" id="previewLink" href="/" target="_blank" rel="noopener">
+            <span class="btn-ico" data-icon="monitor"></span>
+            <span>Preview Mobile</span>
+          </a>
+        </div>
+      </div>
+    </aside>
+
+    <div class="admin-main-col">
+      <header class="admin-topbar">
+        <div>
+          <h1 class="topbar-title" id="sectionTitle">Geral &amp; Aparência</h1>
+          <p class="topbar-sub" id="sectionSubtitle">Tema, comportamento USB, tela inicial e modo descanso OLED.</p>
+        </div>
+        <div class="topbar-actions">
+          <span class="dirty-pill hidden" id="dirtyPill">Alterações pendentes</span>
+          <button type="button" class="btn btn-secondary" id="reloadConfigBtn">Recarregar</button>
+          <button type="button" class="btn btn-primary" id="saveConfigBtn">Salvar alterações</button>
+        </div>
+      </header>
+
+      <main class="admin-content" id="adminContent">
+        <!-- 1. GENERAL -->
+        <section class="panel active" data-panel="general">
+          <div class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <h2>Tema do DeskPulse</h2>
+                <p>Aplica instantaneamente no painel e sincroniza ao vivo com o celular.</p>
+              </div>
+            </div>
+            <div class="admin-theme-grid" id="adminThemeGrid"></div>
+          </div>
+
+          <div class="panel-grid-2">
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Sistema &amp; USB</h2>
+                  <p>Comportamento automático ao plugar celulares e iniciar o Windows.</p>
+                </div>
+              </div>
+              <div class="toggle-list">
+                <label class="toggle-row">
+                  <div>
+                    <div class="toggle-title">Abrir automaticamente ao plugar celular USB</div>
+                    <div class="toggle-desc">Cria o túnel ADB reverse e abre o DeskPulse assim que um novo Android conecta.</div>
+                  </div>
+                  <input type="checkbox" class="switch" id="autoOpenUsbInput">
+                </label>
+
+                <label class="toggle-row">
+                  <div>
+                    <div class="toggle-title">Iniciar com o Windows</div>
+                    <div class="toggle-desc">Registra em <code>HKCU\...\Run</code> para subir o DeskPulse automaticamente no login.</div>
+                  </div>
+                  <input type="checkbox" class="switch" id="startupEnabledInput">
+                </label>
+
+                <label class="toggle-row">
+                  <div>
+                    <div class="toggle-title">Aprovação remota de ferramentas de IA</div>
+                    <div class="toggle-desc">Exibe popup de Permitir/Negar no celular para hooks <code>pre-tool</code>.</div>
+                  </div>
+                  <input type="checkbox" class="switch" id="remoteApprovalInput">
+                </label>
+              </div>
+
+              <div class="field-row" style="margin-top:12px">
+                <label class="field">
+                  <span>Timeout de aprovação remota (segundos)</span>
+                  <input type="number" id="approvalTimeoutInput" min="5" max="300" step="5">
+                </label>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Modo Descanso OLED (Night Mode)</h2>
+                  <p>Escurece a tela AMOLED com relógio anti burn-in à noite ou quando o PC bloqueia.</p>
+                </div>
+              </div>
+              <div class="toggle-list">
+                <label class="toggle-row">
+                  <div>
+                    <div class="toggle-title">Ativar horário noturno</div>
+                    <div class="toggle-desc">Liga o modo descanso automaticamente no intervalo abaixo.</div>
+                  </div>
+                  <input type="checkbox" class="switch" id="nightEnabledInput">
+                </label>
+
+                <label class="toggle-row">
+                  <div>
+                    <div class="toggle-title">Escurecer quando o PC bloquear</div>
+                    <div class="toggle-desc">Ativa o relógio OLED imediatamente ao pressionar <code>Win + L</code>.</div>
+                  </div>
+                  <input type="checkbox" class="switch" id="nightDimLockedInput">
+                </label>
+              </div>
+
+              <div class="field-grid-2" style="margin-top:12px">
+                <label class="field">
+                  <span>Hora de início (0–23)</span>
+                  <input type="number" id="nightStartInput" min="0" max="23">
+                </label>
+                <label class="field">
+                  <span>Hora de término (0–23)</span>
+                  <input type="number" id="nightEndInput" min="0" max="23">
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <h2>Widgets da Home (Bento Grid)</h2>
+                <p>Escolha quais cartões aparecem na aba Início e em qual ordem.</p>
+              </div>
+            </div>
+            <div class="widgets-list" id="homeWidgetsList"></div>
+          </div>
+        </section>
+
+        <!-- 2. WEATHER -->
+        <section class="panel" data-panel="weather">
+          <div class="panel-grid-2">
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Localização do Clima</h2>
+                  <p>Usa Open-Meteo gratuitamente, sem chave de API.</p>
+                </div>
+              </div>
+              <div class="field-stack">
+                <label class="field">
+                  <span>Cidade</span>
+                  <input type="text" id="weatherCityInput" placeholder="Ex: Fortaleza, São Paulo, Curitiba">
+                </label>
+                <div class="field-grid-2">
+                  <label class="field">
+                    <span>Latitude (opcional)</span>
+                    <input type="number" id="weatherLatInput" step="0.0001" placeholder="-3.7319">
+                  </label>
+                  <label class="field">
+                    <span>Longitude (opcional)</span>
+                    <input type="number" id="weatherLonInput" step="0.0001" placeholder="-38.5267">
+                  </label>
+                </div>
+                <label class="field">
+                  <span>Unidade de temperatura</span>
+                  <select id="weatherUnitInput">
+                    <option value="c">Celsius (°C)</option>
+                    <option value="f">Fahrenheit (°F)</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Status ao vivo</h2>
+                  <p>Última leitura recebida do Open-Meteo.</p>
+                </div>
+              </div>
+              <div class="live-box" id="weatherLiveBox">Aguardando dados…</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 3. GITHUB -->
+        <section class="panel" data-panel="github">
+          <div class="panel-grid-2">
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Integração GitHub (GraphQL)</h2>
+                  <p>Heatmap de 52 semanas, streaks e top repositórios. O token nunca é exposto no cliente mobile.</p>
+                </div>
+              </div>
+              <div class="field-stack">
+                <label class="field">
+                  <span>Usuário (opcional — vazio usa o dono do token)</span>
+                  <input type="text" id="githubUserInput" placeholder="Ex: iaagofelipe">
+                </label>
+
+                <div class="token-status-bar" id="githubTokenStatus">Verificando status do token…</div>
+
+                <label class="field">
+                  <span>Novo Personal Access Token (PAT)</span>
+                  <div class="input-with-btn">
+                    <input type="password" id="githubTokenInput" autocomplete="new-password" placeholder="Cole ghp_... ou github_pat_... para substituir">
+                    <button type="button" class="btn btn-danger-soft" id="clearGithubTokenBtn">Remover</button>
+                  </div>
+                </label>
+
+                <label class="field">
+                  <span>Variável de ambiente fallback</span>
+                  <input type="text" id="githubTokenEnvInput" placeholder="GITHUB_TOKEN">
+                </label>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Status ao vivo</h2>
+                  <p>Resumo atual carregado da API do GitHub.</p>
+                </div>
+              </div>
+              <div class="live-box" id="githubLiveBox">Aguardando dados…</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 4. AGENDA -->
+        <section class="panel" data-panel="agenda">
+          <div class="panel-grid-2">
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Feed iCal (.ics)</h2>
+                  <p>Se sua conta Google/Outlook disponibiliza link secreto iCal, cole abaixo para sync automático.</p>
+                </div>
+              </div>
+              <div class="field-stack">
+                <label class="field">
+                  <span>URL secreta do calendário (.ics)</span>
+                  <input type="url" id="agendaIcsInput" placeholder="https://calendar.google.com/calendar/ical/.../basic.ics">
+                </label>
+                <div class="inline-actions">
+                  <button type="button" class="btn btn-secondary" id="refreshAgendaBtn">
+                    <span class="btn-ico" data-icon="refresh"></span>
+                    <span>Atualizar ICS agora</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Próximos compromissos sincronizados</h2>
+                  <p>Inclui eventos do feed ICS e enviados via API/gcalendar.</p>
+                </div>
+              </div>
+              <div class="live-box" id="agendaLiveBox">Aguardando dados…</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 5. AI -->
+        <section class="panel" data-panel="ai">
+          <div class="panel-grid-2">
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Monitor de IA &amp; Orçamentos</h2>
+                  <p>Defina limites opcionais de tokens para exibir barras de porcentagem na aba IA e na Home.</p>
+                </div>
+              </div>
+              <div class="field-stack">
+                <label class="field">
+                  <span>Provedor ativo</span>
+                  <select id="aiProviderInput">
+                    <option value="antigravity">Antigravity (local)</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Orçamento janela 5h (tokens, opcional)</span>
+                  <input type="number" id="aiBudget5hInput" min="0" step="100000" placeholder="Vazio = exibe apenas total real">
+                </label>
+                <label class="field">
+                  <span>Orçamento semanal 7d (tokens, opcional)</span>
+                  <input type="number" id="aiBudgetWeeklyInput" min="0" step="1000000" placeholder="Vazio = exibe apenas total real">
+                </label>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="panel-card-head">
+                <div>
+                  <h2>Uso real detectado</h2>
+                  <p>Lido diretamente dos transcripts locais do Antigravity.</p>
+                </div>
+              </div>
+              <div class="live-box" id="aiLiveBox">Aguardando dados…</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- 6. SHORTCUTS -->
+        <section class="panel" data-panel="shortcuts">
+          <div class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <h2>Editor de Atalhos (Stream Deck)</h2>
+                <p>Configure até 16 botões (2 páginas de 4×2) com hotkeys Win32, apps, pastas, URLs ou controles de áudio.</p>
+              </div>
+              <button type="button" class="btn btn-primary" id="addShortcutBtn">
+                <span class="btn-ico" data-icon="plus"></span>
+                <span>Novo atalho</span>
+              </button>
+            </div>
+            <div class="shortcuts-editor" id="shortcutsEditor"></div>
+          </div>
+        </section>
+
+        <!-- 7. RAW JSON -->
+        <section class="panel" data-panel="raw">
+          <div class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <h2>Editor JSON Bruto (<code>config.json</code>)</h2>
+                <p>Tokens sensíveis ficam mascarados como <code>"__KEEP_EXISTING__"</code> e são preservados automaticamente ao salvar.</p>
+              </div>
+              <div class="inline-actions">
+                <button type="button" class="btn btn-secondary" id="formatJsonBtn">Formatar</button>
+                <button type="button" class="btn btn-primary" id="saveRawJsonBtn">Aplicar JSON</button>
+              </div>
+            </div>
+            <div class="raw-error hidden" id="rawJsonError" role="alert"></div>
+            <textarea id="rawJsonArea" class="raw-json-area" spellcheck="false" aria-label="Conteúdo JSON de configuração"></textarea>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+
+  <div id="tokenOverlay" class="token-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tokenTitle">
+    <div class="token-card">
+      <div class="token-head">
+        <span class="badge-pill">Autenticação</span>
+        <h2 id="tokenTitle">Conectar ao DeskPulse Admin</h2>
+        <p>Informe o token local exibido no terminal do DeskPulse (ou abra com <code>deskpulse admin</code>).</p>
+      </div>
+      <form id="tokenForm" class="field-stack" autocomplete="off">
+        <input id="tokenInput" type="password" placeholder="Token de acesso (64 hex)" required>
+        <div id="tokenError" class="raw-error hidden" role="alert"></div>
+        <div class="inline-actions" style="justify-content:flex-end">
+          <button type="submit" class="btn btn-primary" id="saveTokenBtn">Conectar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/assets/js/admin.js"></script>
+</body>
+</html>

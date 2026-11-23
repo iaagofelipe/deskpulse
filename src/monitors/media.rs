@@ -224,6 +224,51 @@ fn current_session() -> Option<GlobalSystemMediaTransportControlsSession> {
     manager.GetCurrentSession().ok()
 }
 
+pub fn friendly_app_name(app_raw: &str) -> String {
+    let base = app_raw
+        .split('!')
+        .next()
+        .unwrap_or(app_raw)
+        .trim()
+        .trim_end_matches(".exe")
+        .trim_end_matches(".EXE");
+    if base.is_empty() {
+        return String::new();
+    }
+    let lower = base.to_ascii_lowercase();
+    match lower.as_str() {
+        "308046b0af4a39cb" | "e7cf176e110c211b" | "firefox" => return "Firefox".to_string(),
+        "chrome" => return "Chrome".to_string(),
+        "msedge" => return "Edge".to_string(),
+        "brave" => return "Brave".to_string(),
+        "opera" => return "Opera".to_string(),
+        "vivaldi" => return "Vivaldi".to_string(),
+        "zen" => return "Zen".to_string(),
+        "vlc" => return "VLC".to_string(),
+        "spotify" => return "Spotify".to_string(),
+        _ => {}
+    }
+    if lower.contains("spotify") {
+        return "Spotify".to_string();
+    }
+    if lower.contains("firefox") {
+        return "Firefox".to_string();
+    }
+    if lower.contains("chrome") {
+        return "Chrome".to_string();
+    }
+    if lower.contains("msedge") || lower.contains("microsoftedge") {
+        return "Edge".to_string();
+    }
+    if lower.contains("zunemusic") || lower.contains("windowsmediaplayer") {
+        return "Media Player".to_string();
+    }
+    if base.len() == 16 && base.chars().all(|c| c.is_ascii_hexdigit()) {
+        return "Navegador".to_string();
+    }
+    base.to_string()
+}
+
 fn collect_media_snapshot(artwork_cache: &mut HashMap<(String, String, String), Option<String>>) -> MediaSnapshot {
     let (volume_pct, muted) = read_audio_state();
     let mic_muted = read_mic_muted_state();
@@ -257,12 +302,7 @@ fn collect_media_snapshot(artwork_cache: &mut HashMap<(String, String, String), 
         .SourceAppUserModelId()
         .map(|h| h.to_string())
         .unwrap_or_default();
-    let app = app_raw
-        .split('!')
-        .next()
-        .unwrap_or(&app_raw)
-        .trim_end_matches(".exe")
-        .to_string();
+    let app = friendly_app_name(&app_raw);
 
     let props_opt = session.TryGetMediaPropertiesAsync().ok().and_then(|op| op.get().ok());
     let (title, artist, album, artwork_data_url) = if let Some(ref props) = props_opt {
@@ -461,6 +501,17 @@ mod tests {
         assert_eq!(ticks_to_secs(750_000_000), Some(75));
         assert_eq!(ticks_to_secs(-1), None);
         assert_eq!(secs_to_ticks(120), 1_200_000_000);
+    }
+
+    #[test]
+    fn test_friendly_app_name_normalizes_aumids_and_hashes() {
+        assert_eq!(friendly_app_name("308046B0AF4A39CB"), "Firefox");
+        assert_eq!(friendly_app_name("SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"), "Spotify");
+        assert_eq!(friendly_app_name("chrome.exe"), "Chrome");
+        assert_eq!(friendly_app_name("msedge.exe"), "Edge");
+        assert_eq!(friendly_app_name("A1B2C3D4E5F60718"), "Navegador");
+        assert_eq!(friendly_app_name("foobar2000.exe"), "foobar2000");
+        assert_eq!(friendly_app_name(""), "");
     }
 
     #[tokio::test]

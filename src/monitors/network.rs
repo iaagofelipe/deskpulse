@@ -322,10 +322,7 @@ impl NetworkMonitor {
 
         let snapshot_bg = Arc::clone(&self.snapshot);
         let speedtest_task = async move {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .unwrap_or_else(|_| reqwest::Client::new());
+            let client = crate::http_client::build_http_client(Duration::from_secs(15));
 
             let start = Instant::now();
             let url = "https://speed.cloudflare.com/__down?bytes=10000000";

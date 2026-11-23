@@ -54,6 +54,7 @@ const ICON_PATHS = {
   chevron_left: '<polyline points="15 18 9 12 15 6"/>',
   chevron_right: '<polyline points="9 18 15 12 9 6"/>',
   rotate_ccw: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><polyline points="3 3 3 8 8 8"/>',
+  palette: '<circle cx="13.5" cy="6.5" r="1" fill="currentColor" stroke="none"/><circle cx="17.5" cy="10.5" r="1" fill="currentColor" stroke="none"/><circle cx="8.5" cy="7.5" r="1" fill="currentColor" stroke="none"/><circle cx="6.5" cy="12.5" r="1" fill="currentColor" stroke="none"/><path d="M12 2a10 10 0 0 0 0 20h1.5a2.5 2.5 0 0 0 2.5-2.5c0-.66-.27-1.26-.7-1.7a1.5 1.5 0 0 1 1.1-2.5H18a4 4 0 0 0 4-4C22 6.03 17.52 2 12 2z"/>',
 };
 
 const ICON_ALIASES = {

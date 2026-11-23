@@ -65,10 +65,7 @@ impl AgendaStore {
         let today = Local::now().date_naive();
         let pushed_events = load_pushed_events(&push_path, today);
         let ics_url = normalize_optional_url(initial_ics_url);
-        let client = reqwest::Client::builder()
-            .timeout(ICS_HTTP_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        let client = crate::http_client::build_http_client(ICS_HTTP_TIMEOUT);
 
         Self {
             push_path,

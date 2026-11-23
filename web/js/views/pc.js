@@ -37,7 +37,7 @@ function renderUnavailableGauge(label, sub, color, escapeHtml) {
   const safeLabel = escapeHtml(label);
   const safeSub = escapeHtml(sub);
   return `<svg class="gauge-svg" viewBox="0 0 132 120" role="img" aria-label="${safeLabel} N/A">
-    <path d="M 26.16 85.00 A 46 46 0 1 1 105.84 85.00" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="9" stroke-linecap="round"/>
+    <path d="M 26.16 85.00 A 46 46 0 1 1 105.84 85.00" fill="none" stroke="var(--track)" stroke-width="9" stroke-linecap="round"/>
     <text x="66" y="65" text-anchor="middle" fill="var(--muted)" font-size="21" font-weight="700" class="num">N/A</text>
     <text x="66" y="84" text-anchor="middle" fill="${color}" opacity="0.7" font-size="10" font-weight="700" letter-spacing="0.08em">${safeLabel.toUpperCase()}</text>
     <text x="66" y="109" text-anchor="middle" fill="var(--muted)" font-size="10">${safeSub}</text>

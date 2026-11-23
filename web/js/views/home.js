@@ -417,10 +417,12 @@ function getPcStripCardData(ctx) {
   const sig = ['pcstrip', cpuPct, gpuPct, gpuTemp, ramPct, ramSub, downStr, upStr, cpuLabel].join('|');
 
   const metricBox = (label, val, sub, color) => `
-    <div style="display:flex;flex-direction:column;gap:2px;min-width:0;padding:4px 8px;border-radius:var(--radius-sm);background:var(--surface-2);border:1px solid var(--border)">
-      <span style="font-size:10px;font-weight:700;letter-spacing:0.06em;color:var(--muted);text-transform:uppercase">${escapeHtml(label)}</span>
-      <span class="num" style="font-size:17px;font-weight:700;line-height:1.1;color:${color}">${escapeHtml(val)}</span>
-      <span class="num" style="font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHtml(sub)}</span>
+    <div class="pc-strip-item">
+      <div class="pc-strip-top">
+        <span class="pc-strip-label">${escapeHtml(label)}</span>
+        <span class="pc-strip-sub num" title="${escapeHtml(sub)}">${escapeHtml(sub)}</span>
+      </div>
+      <span class="pc-strip-val num" style="color:${color}" title="${escapeHtml(val)}">${escapeHtml(val)}</span>
     </div>`;
 
   const html = `
@@ -473,9 +475,8 @@ function getGithubCardData(ctx) {
           ${charts.renderGithubHeatmap({ weeks, compact: true })}
         </div>
         <div class="bento-github-stats">
-          <div class="num" style="font-size:20px;font-weight:700;line-height:1.05;color:var(--text)">${escapeHtml(formatCompactNumber(total))}</div>
-          <div style="font-size:10px;color:var(--muted)">contribuições</div>
-          <div class="num" style="font-size:11px;color:var(--gh-4);font-weight:600;margin-top:2px">${streak} ${streak === 1 ? 'dia' : 'dias'} streak</div>
+          <div class="bento-github-total num">${escapeHtml(formatCompactNumber(total))}</div>
+          <div class="bento-github-sub">contribuições</div>
         </div>
       </div>`;
   }
@@ -528,11 +529,23 @@ function ensureShell(mount) {
   mount.innerHTML = `
     <div class="home-layout">
       <header class="home-header">
-        <div class="home-clock num" data-home-clock>00:00</div>
+        <button type="button" class="home-clock-trigger" data-action="open-theme" aria-label="Alternar tema" title="Alternar tema">
+          <span class="home-clock num" data-home-clock>00:00</span>
+          <span class="home-theme-chip" data-home-theme-icon aria-hidden="true"></span>
+        </button>
         <div class="home-date" data-home-date></div>
       </header>
       <div class="bento-grid" data-home-grid></div>
     </div>`;
+
+  const themeBtn = mount.querySelector('[data-action="open-theme"]');
+  if (themeBtn) {
+    themeBtn.addEventListener('click', () => {
+      if (latestCtx && typeof latestCtx.openThemePicker === 'function') {
+        latestCtx.openThemePicker();
+      }
+    });
+  }
 
   const grid = mount.querySelector('[data-home-grid]');
   if (grid) {
@@ -603,6 +616,11 @@ export function render(ctx) {
   latestCtx = ctx;
 
   ensureShell(mount);
+
+  const themeIconEl = mount.querySelector('[data-home-theme-icon]');
+  if (themeIconEl && !themeIconEl.firstChild && ctx.icons) {
+    themeIconEl.innerHTML = ctx.icons.icon('palette', 13);
+  }
 
   const now = new Date();
   const clockText = ctx.formatClock(now);

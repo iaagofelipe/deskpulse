@@ -5,6 +5,7 @@ use tokio::sync::watch;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
     OpenPhone,
+    OpenAdmin,
     OpenBrowser,
     EditConfig,
     ToggleStartup,
@@ -21,11 +22,14 @@ pub const MENU_ID_EDIT_CONFIG: u32 = 1003;
 pub const MENU_ID_TOGGLE_STARTUP: u32 = 1004;
 #[cfg_attr(not(windows), allow(dead_code))]
 pub const MENU_ID_QUIT: u32 = 1005;
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const MENU_ID_OPEN_ADMIN: u32 = 1006;
 
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn tray_action_from_menu_id(id: u32) -> Option<TrayAction> {
     match id {
         MENU_ID_OPEN_PHONE => Some(TrayAction::OpenPhone),
+        MENU_ID_OPEN_ADMIN => Some(TrayAction::OpenAdmin),
         MENU_ID_OPEN_BROWSER => Some(TrayAction::OpenBrowser),
         MENU_ID_EDIT_CONFIG => Some(TrayAction::EditConfig),
         MENU_ID_TOGGLE_STARTUP => Some(TrayAction::ToggleStartup),
@@ -48,6 +52,11 @@ fn format_dashboard_url(port: u16, token: &str) -> String {
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
+fn format_admin_url(port: u16, token: &str) -> String {
+    format!("http://127.0.0.1:{port}/admin#token={token}")
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
 fn encode_tooltip_utf16(text: &str) -> [u16; 128] {
     let mut buf = [0u16; 128];
     for (dst, unit) in buf.iter_mut().take(127).zip(text.encode_utf16()) {
@@ -59,9 +68,9 @@ fn encode_tooltip_utf16(text: &str) -> [u16; 128] {
 #[cfg(windows)]
 mod platform {
     use super::{
-        encode_tooltip_utf16, format_dashboard_url, tray_action_from_menu_id, TrayAction,
-        TrayOptions, MENU_ID_EDIT_CONFIG, MENU_ID_OPEN_BROWSER, MENU_ID_OPEN_PHONE, MENU_ID_QUIT,
-        MENU_ID_TOGGLE_STARTUP,
+        encode_tooltip_utf16, format_admin_url, format_dashboard_url, tray_action_from_menu_id,
+        TrayAction, TrayOptions, MENU_ID_EDIT_CONFIG, MENU_ID_OPEN_ADMIN, MENU_ID_OPEN_BROWSER,
+        MENU_ID_OPEN_PHONE, MENU_ID_QUIT, MENU_ID_TOGGLE_STARTUP,
     };
     use std::cell::RefCell;
     use std::ffi::c_void;
@@ -402,12 +411,19 @@ mod platform {
         }
     }
 
-    fn open_browser(port: u16, token: &str) {
-        let url = format_dashboard_url(port, token);
+    fn open_url_in_browser(url: &str) {
         let mut cmd = Command::new("explorer.exe");
-        cmd.arg(&url);
+        cmd.arg(url);
         cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
         let _ = cmd.spawn();
+    }
+
+    fn open_browser(port: u16, token: &str) {
+        open_url_in_browser(&format_dashboard_url(port, token));
+    }
+
+    fn open_admin(port: u16, token: &str) {
+        open_url_in_browser(&format_admin_url(port, token));
     }
 
     fn open_phone() {
@@ -443,6 +459,7 @@ mod platform {
 
         match action {
             TrayAction::OpenPhone => open_phone(),
+            TrayAction::OpenAdmin => open_admin(port, &token),
             TrayAction::OpenBrowser => open_browser(port, &token),
             TrayAction::EditConfig => open_config_editor(&config_path),
             TrayAction::ToggleStartup => {
@@ -473,6 +490,12 @@ mod platform {
                 MF_UNCHECKED
             };
 
+        let _ = AppendMenuW(
+            hmenu,
+            MF_STRING,
+            MENU_ID_OPEN_ADMIN as usize,
+            w!("Painel Administrativo (/admin)"),
+        );
         let _ = AppendMenuW(
             hmenu,
             MF_STRING,
@@ -587,6 +610,10 @@ mod tests {
             Some(TrayAction::OpenPhone)
         );
         assert_eq!(
+            tray_action_from_menu_id(MENU_ID_OPEN_ADMIN),
+            Some(TrayAction::OpenAdmin)
+        );
+        assert_eq!(
             tray_action_from_menu_id(MENU_ID_OPEN_BROWSER),
             Some(TrayAction::OpenBrowser)
         );
@@ -611,6 +638,10 @@ mod tests {
         assert_eq!(
             format_dashboard_url(8765, "deadbeef"),
             "http://127.0.0.1:8765/#token=deadbeef"
+        );
+        assert_eq!(
+            format_admin_url(8765, "deadbeef"),
+            "http://127.0.0.1:8765/admin#token=deadbeef"
         );
 
         let tip = encode_tooltip_utf16("DeskPulse \u{2014} Hub de Mesa");

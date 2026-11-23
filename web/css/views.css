@@ -11,11 +11,24 @@
 
 .home-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 0 2px;
   flex-shrink: 0;
+}
+
+.home-clock-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: var(--radius-sm);
+  padding: 1px 4px 1px 0;
+  transition: opacity var(--t-fast) var(--ease), transform 90ms ease;
+}
+
+.home-clock-trigger:active {
+  transform: scale(0.96);
 }
 
 .home-clock {
@@ -24,6 +37,24 @@
   letter-spacing: -0.03em;
   line-height: 1;
   color: var(--text);
+}
+
+.home-theme-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  color: var(--accent);
+  flex-shrink: 0;
+  transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease);
+}
+
+.home-clock-trigger:hover .home-theme-chip {
+  background: var(--surface-hover);
 }
 
 .home-date {
@@ -269,23 +300,49 @@
 .bento-github-row {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   min-height: 0;
-  flex: 1;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .bento-github-map {
   flex: 1 1 auto;
   min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
   overflow: hidden;
+}
+
+.bento-github-map svg {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  display: block;
 }
 
 .bento-github-stats {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 2px;
+  justify-content: center;
+  gap: 1px;
   flex-shrink: 0;
+}
+
+.bento-github-total {
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+}
+
+.bento-github-sub {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.1;
 }
 
 .bento-pc-strip {
@@ -293,7 +350,59 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
-  align-items: center;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.pc-strip-item {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 0;
+  padding: 6px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.pc-strip-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+}
+
+.pc-strip-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.pc-strip-sub {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  text-align: right;
+}
+
+.pc-strip-val {
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.08;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ==========================================================================
@@ -674,14 +783,14 @@
   width: 62px;
   height: 62px;
   border-radius: 50%;
-  background: #ffffff;
-  color: #090b0e;
+  background: var(--play-bg);
+  color: var(--play-ink);
   border: 0;
-  box-shadow: 0 8px 26px rgba(255, 255, 255, 0.22);
+  box-shadow: var(--play-shadow);
 }
 
 .ctrl-play:hover {
-  background: #e2e8f0;
+  filter: brightness(0.94);
 }
 
 .media-vol-bar {
@@ -702,7 +811,7 @@
 .mic-btn.is-muted {
   background: var(--red-soft);
   border-color: rgba(239, 68, 68, 0.5);
-  color: #fca5a5;
+  color: var(--badge-err-ink);
 }
 
 /* ==========================================================================
@@ -940,7 +1049,7 @@
   width: 100%;
   height: 7px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--track);
   overflow: hidden;
 }
 
@@ -1025,7 +1134,7 @@
   width: 100%;
   height: 6px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--track);
   overflow: hidden;
 }
 
@@ -2094,7 +2203,7 @@
   width: 100%;
   height: 5px;
   border-radius: var(--radius-pill);
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--track);
   overflow: hidden;
 }
 
@@ -2332,16 +2441,47 @@
    COMPACT LANDSCAPE OVERRIDES (Galaxy S8+ 658x320 .. 846x412 CSS px)
    ========================================================================== */
 @media (max-height: 440px) {
+  .home-layout {
+    gap: 6px;
+  }
+
   .home-clock {
-    font-size: 24px;
+    font-size: 22px;
   }
 
   .home-date {
     font-size: 12px;
   }
 
+  .bento-grid {
+    gap: 6px;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.04fr);
+  }
+
   .bento-card {
-    padding: 7px 10px;
+    padding: 6px 10px;
+  }
+
+  .bento-card .card-head {
+    margin-bottom: 4px;
+  }
+
+  .bento-pc-strip {
+    gap: 6px;
+  }
+
+  .pc-strip-item {
+    padding: 4px 8px;
+    gap: 2px;
+  }
+
+  .pc-strip-label,
+  .pc-strip-sub {
+    font-size: 9.5px;
+  }
+
+  .pc-strip-val {
+    font-size: 15.5px;
   }
 
   .bento-weather-temp {
@@ -2625,5 +2765,99 @@
     padding: 4px 6px;
     font-size: 10px;
     gap: 3px;
+  }
+}
+
+/* Ultra-Compact Landscape (browser URL bar open, <= 285px CSS height) */
+@media (max-height: 285px) {
+  .home-layout {
+    gap: 4px;
+  }
+
+  .home-clock {
+    font-size: 18px;
+  }
+
+  .home-date {
+    font-size: 11px;
+  }
+
+  .bento-grid {
+    gap: 4px;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr) minmax(0, 0.9fr);
+  }
+
+  .bento-card {
+    padding: 4px 8px;
+  }
+
+  .bento-card .card-head {
+    margin-bottom: 2px;
+  }
+
+  .bento-ai-bars {
+    gap: 2px;
+  }
+
+  .bento-bar-row {
+    font-size: 10.5px;
+    line-height: 1.2;
+  }
+
+  .bento-weather-left {
+    gap: 8px;
+  }
+
+  .bento-weather-left svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  .bento-weather-temp {
+    font-size: 21px;
+  }
+
+  .bento-agenda-title,
+  .bento-media-title {
+    font-size: 12px;
+  }
+
+  .bento-agenda-sub,
+  .bento-media-artist {
+    font-size: 10.5px;
+  }
+
+  .bento-media-thumb {
+    width: 28px;
+    height: 28px;
+  }
+
+  .mini-play-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .pc-strip-item {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px 8px;
+    gap: 6px;
+  }
+
+  .pc-strip-sub {
+    display: none;
+  }
+
+  .pc-strip-val {
+    font-size: 14px;
+  }
+
+  .bento-github-total {
+    font-size: 15px;
+  }
+
+  .bento-github-sub {
+    font-size: 9px;
   }
 }

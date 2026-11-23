@@ -68,10 +68,7 @@ impl GithubMonitor {
         let mut shutdown_bg = shutdown;
 
         tokio::spawn(async move {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .unwrap_or_default();
+            let client = crate::http_client::build_http_client(Duration::from_secs(15));
             let poll_interval = Duration::from_secs(15 * 60);
 
             loop {

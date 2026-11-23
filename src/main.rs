@@ -4,6 +4,7 @@ mod approvals;
 mod config;
 mod events;
 mod hooks;
+mod http_client;
 mod monitors;
 mod security;
 mod server;
@@ -62,6 +63,7 @@ pub enum Command {
     InstallHooks,
     UninstallHooks,
     Open,
+    Admin,
     Todo(TodoCommand),
 }
 
@@ -105,6 +107,7 @@ where
         Some("install-hooks") if parts.len() == 2 => Ok(Command::InstallHooks),
         Some("uninstall-hooks") if parts.len() == 2 => Ok(Command::UninstallHooks),
         Some("open") if parts.len() == 2 => Ok(Command::Open),
+        Some("admin") if parts.len() == 2 => Ok(Command::Admin),
         Some("todo") => match parts.get(2).map(String::as_str) {
             Some("list") if parts.len() == 3 => Ok(Command::Todo(TodoCommand::List)),
             Some("add") if parts.len() >= 4 => {
@@ -148,7 +151,13 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
         Duration::from_secs(initial_cfg.approval_timeout_secs),
     ));
     let system = Arc::new(SystemMonitor::spawn(shutdown_rx.clone()));
-    let adb = Arc::new(AdbBridge::spawn(initial_cfg.port, shutdown_rx.clone()));
+    let auto_open_url = format!("http://127.0.0.1:{}/#token={}", initial_cfg.port, initial_cfg.token);
+    let adb = Arc::new(AdbBridge::spawn_with_auto_open(
+        initial_cfg.port,
+        Some(auto_open_url),
+        initial_cfg.auto_open_on_usb,
+        shutdown_rx.clone(),
+    ));
     let antigravity = Arc::new(AntigravityMonitor::spawn(shutdown_rx.clone()));
     let agenda = Arc::new(AgendaStore::new(
         data_dir.join("agenda_push.json"),
@@ -195,6 +204,7 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
     let shortcuts_clone = Arc::clone(&shortcuts);
     let antigravity_clone = Arc::clone(&antigravity);
     let agenda_clone = Arc::clone(&agenda);
+    let adb_clone = Arc::clone(&adb);
     let remote_approval_enabled_clone = Arc::clone(&remote_approval_enabled);
     let calendar_ics_url_clone = Arc::clone(&calendar_ics_url);
 
@@ -209,6 +219,7 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
                         github_clone.update_config(new_cfg.github.clone());
                         shortcuts_clone.update_config(new_cfg.shortcuts.clone());
                         antigravity_clone.update_budgets(new_cfg.ai.budget_5h_tokens, new_cfg.ai.budget_weekly_tokens);
+                        adb_clone.set_auto_open(new_cfg.auto_open_on_usb);
                         remote_approval_enabled_clone.store(new_cfg.remote_approval_enabled, std::sync::atomic::Ordering::Relaxed);
 
                         let next_ics = new_cfg
@@ -283,6 +294,10 @@ async fn run_serve(no_tray: bool) -> Result<(), String> {
         "DeskPulse rodando em http://127.0.0.1:{}/#token={}",
         initial_cfg.port, initial_cfg.token
     );
+    println!(
+        "Painel Admin (PC): http://127.0.0.1:{}/admin#token={}",
+        initial_cfg.port, initial_cfg.token
+    );
     println!("Config: {}", cfg_path.display());
     println!(
         "Plugue o celular Android via USB (Depuracao USB ativa) e abra http://127.0.0.1:{}/#token={}",
@@ -347,6 +362,9 @@ fn run_open() -> Result<(), String> {
         .first()
         .ok_or_else(|| "nenhum dispositivo Android conectado via USB (adb devices vazio)".to_string())?;
 
+    let spec = format!("tcp:{}", cfg.port);
+    run_adb_sync(&adb_path, &["-s", serial, "reverse", &spec, &spec])?;
+
     let url = format!("http://127.0.0.1:{}/#token={}", cfg.port, cfg.token);
     run_adb_sync(
         &adb_path,
@@ -366,6 +384,21 @@ fn run_open() -> Result<(), String> {
         "DeskPulse aberto no dispositivo {serial} (http://127.0.0.1:{}/)",
         cfg.port
     );
+    Ok(())
+}
+
+fn run_admin() -> Result<(), String> {
+    let cfg = config::load_or_create(&config::default_config_path())?;
+    let url = format!("http://127.0.0.1:{}/admin#token={}", cfg.port, cfg.token);
+    #[cfg(windows)]
+    {
+        let mut cmd = StdCommand::new("explorer.exe");
+        cmd.arg(&url);
+        cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
+        cmd.spawn()
+            .map_err(|e| format!("falha ao abrir navegador: {e}"))?;
+    }
+    println!("Painel Admin aberto em http://127.0.0.1:{}/admin", cfg.port);
     Ok(())
 }
 
@@ -483,6 +516,12 @@ async fn main() {
                 std::process::exit(1);
             }
         }
+        Ok(Command::Admin) => {
+            if let Err(err) = run_admin() {
+                eprintln!("{err}");
+                std::process::exit(1);
+            }
+        }
         Ok(Command::Todo(sub)) => {
             if let Err(err) = run_todo(sub) {
                 eprintln!("{err}");
@@ -526,6 +565,7 @@ mod tests {
             parse_cli(["deskpulse", "uninstall-hooks"]).unwrap(),
             Command::UninstallHooks
         );
+        assert_eq!(parse_cli(["deskpulse", "admin"]).unwrap(), Command::Admin);
         assert!(parse_cli(["deskpulse", "unknown"]).is_err());
     }
 

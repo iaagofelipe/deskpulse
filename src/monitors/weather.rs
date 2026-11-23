@@ -92,10 +92,7 @@ impl WeatherMonitor {
         let mut shutdown_bg = shutdown;
 
         tokio::spawn(async move {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()
-                .unwrap_or_default();
+            let client = crate::http_client::build_http_client(Duration::from_secs(10));
             let mut geo_cache: HashMap<String, (f64, f64)> = HashMap::new();
             let poll_interval = Duration::from_secs(15 * 60);
 
@@ -224,6 +221,9 @@ impl WeatherMonitor {
                                             }
                                             Err(err) => {
                                                 if let Ok(mut cur) = snapshot_bg.write() {
+                                                    cur.configured = true;
+                                                    cur.city = current_cfg.city.clone();
+                                                    cur.unit = current_cfg.unit.clone();
                                                     cur.error = Some(err);
                                                 }
                                             }
@@ -231,6 +231,9 @@ impl WeatherMonitor {
                                     }
                                     Err(err) => {
                                         if let Ok(mut cur) = snapshot_bg.write() {
+                                            cur.configured = true;
+                                            cur.city = current_cfg.city.clone();
+                                            cur.unit = current_cfg.unit.clone();
                                             cur.error =
                                                 Some(format!("Falha ao decodificar previsão: {err}"));
                                         }
@@ -238,6 +241,9 @@ impl WeatherMonitor {
                                 },
                                 Err(err) => {
                                     if let Ok(mut cur) = snapshot_bg.write() {
+                                        cur.configured = true;
+                                        cur.city = current_cfg.city.clone();
+                                        cur.unit = current_cfg.unit.clone();
                                         cur.error = Some(format!(
                                             "Falha ao conectar com Open-Meteo: {err}"
                                         ));

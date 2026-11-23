@@ -1,6 +1,9 @@
 use crate::agenda::{AgendaEvent, AgendaSnapshot, AgendaStore};
 use crate::approvals::{ApprovalOutcome, ApprovalRequest, ApprovalStore, Decision};
-use crate::config::{save_config, AppConfig};
+use crate::config::{
+    normalize_theme, save_config, AiConfig, AppConfig, NightModeConfig, ShortcutConfig,
+    WeatherConfig,
+};
 use crate::events::{now_ms, EventBus, NotificationEvent, StreamEvent};
 use crate::hooks::{
     format_pre_tool_output, parse_pre_tool, parse_stop, PreToolAction,
@@ -16,14 +19,13 @@ use crate::monitors::ai::AiSnapshot;
 use crate::monitors::weather::{WeatherMonitor, WeatherSnapshot};
 use crate::monitors::github::{GithubMonitor, GithubSnapshot};
 use crate::shortcuts::{ShortcutRunner, ShortcutTileState, ShortcutError};
-use crate::config::NightModeConfig;
 use crate::web_assets::serve_web_asset;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::middleware;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
@@ -36,6 +38,7 @@ use std::time::Duration;
 use tokio::sync::{broadcast, watch};
 
 static INDEX_HTML: &str = include_str!("../web/index.html");
+static ADMIN_HTML: &str = include_str!("../web/admin.html");
 static MANIFEST_JSON: &str = include_str!("../assets/manifest.webmanifest");
 static ICON_SVG: &str = include_str!("../assets/icon.svg");
 static ICON_192_PNG: &[u8] = include_bytes!("../assets/icon-192.png");
@@ -83,6 +86,7 @@ pub struct DashboardState {
     pub shortcuts: Vec<ShortcutTileState>,
     pub home_widgets: Vec<String>,
     pub night_mode: NightModeConfig,
+    pub theme: String,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -152,11 +156,16 @@ async fn collect_dashboard_state(state: &AppState) -> DashboardState {
         shortcuts: shortcuts_snap,
         home_widgets: cfg.home_widgets,
         night_mode: cfg.night_mode,
+        theme: crate::config::normalize_theme(&cfg.theme).to_string(),
     }
 }
 
 async fn index_handler() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+async fn admin_handler() -> Html<&'static str> {
+    Html(ADMIN_HTML)
 }
 
 async fn manifest_handler() -> Response {
@@ -619,6 +628,363 @@ async fn system_lock_handler() -> Response {
     }
 }
 
+const REDACTED_SECRET: &str = "__KEEP_EXISTING__";
+
+fn mask_secret_preview(secret: &str) -> String {
+    let trimmed = secret.trim();
+    let chars: Vec<char> = trimmed.chars().collect();
+    if chars.len() <= 8 {
+        return "••••••••".to_string();
+    }
+    let prefix: String = chars[..4].iter().collect();
+    let suffix: String = chars[chars.len() - 4..].iter().collect();
+    format!("{prefix}••••{suffix}")
+}
+
+fn build_admin_config_view(state: &AppState, cfg: &AppConfig) -> Value {
+    let mut redacted = cfg.clone();
+    redacted.token = REDACTED_SECRET.to_string();
+    if redacted
+        .github
+        .token
+        .as_deref()
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+    {
+        redacted.github.token = Some(REDACTED_SECRET.to_string());
+    }
+    let raw_json = serde_json::to_string_pretty(&redacted).unwrap_or_else(|_| "{}".to_string());
+
+    let github_token_preview = cfg
+        .github
+        .token
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(mask_secret_preview);
+
+    json!({
+        "config_path": state.config_path.to_string_lossy().to_string(),
+        "port": cfg.port,
+        "approval_timeout_secs": cfg.approval_timeout_secs,
+        "remote_approval_enabled": cfg.remote_approval_enabled,
+        "calendar_ics_url": cfg.calendar_ics_url,
+        "theme": normalize_theme(&cfg.theme),
+        "auto_open_on_usb": cfg.auto_open_on_usb,
+        "home_widgets": cfg.home_widgets,
+        "night_mode": cfg.night_mode,
+        "weather": cfg.weather,
+        "github": {
+            "username": cfg.github.username,
+            "token_env": cfg.github.token_env,
+            "token_set": github_token_preview.is_some(),
+            "token_preview": github_token_preview,
+        },
+        "ai": cfg.ai,
+        "shortcuts": cfg.shortcuts,
+        "startup_enabled": crate::config::startup_status(),
+        "raw_json": raw_json,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminGithubPatch {
+    username: Option<String>,
+    token_env: Option<String>,
+    token_action: Option<String>,
+    new_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminConfigPatch {
+    theme: Option<String>,
+    auto_open_on_usb: Option<bool>,
+    remote_approval_enabled: Option<bool>,
+    approval_timeout_secs: Option<u64>,
+    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    calendar_ics_url: Option<Option<String>>,
+    home_widgets: Option<Vec<String>>,
+    night_mode: Option<NightModeConfig>,
+    weather: Option<WeatherConfig>,
+    github: Option<AdminGithubPatch>,
+    ai: Option<AiConfig>,
+    shortcuts: Option<Vec<ShortcutConfig>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawConfigBody {
+    raw_json: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StartupToggleBody {
+    enabled: bool,
+}
+
+async fn apply_and_persist_config(state: &AppState, mut next_cfg: AppConfig) -> Result<AppConfig, String> {
+    next_cfg.theme = normalize_theme(&next_cfg.theme).to_string();
+    next_cfg.approval_timeout_secs = next_cfg.approval_timeout_secs.clamp(5, 300);
+    next_cfg.night_mode.start_hour = next_cfg.night_mode.start_hour.min(23);
+    next_cfg.night_mode.end_hour = next_cfg.night_mode.end_hour.min(23);
+    next_cfg.shortcuts.truncate(16);
+    if next_cfg.home_widgets.is_empty() {
+        next_cfg.home_widgets = crate::config::default_home_widgets();
+    }
+    next_cfg.calendar_ics_url = next_cfg
+        .calendar_ics_url
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    save_config(&state.config_path, &next_cfg)?;
+
+    let ics_changed = {
+        let mut ics_guard = state
+            .calendar_ics_url
+            .lock()
+            .map_err(|_| "settings lock poisoned".to_string())?;
+        let changed = *ics_guard != next_cfg.calendar_ics_url;
+        *ics_guard = next_cfg.calendar_ics_url.clone();
+        changed
+    };
+
+    if let Ok(mut live) = state.config_live.write() {
+        *live = next_cfg.clone();
+    }
+
+    state
+        .remote_approval_enabled
+        .store(next_cfg.remote_approval_enabled, Ordering::Relaxed);
+    state.weather.update_config(next_cfg.weather.clone());
+    state.github.update_config(next_cfg.github.clone());
+    state.shortcuts.update_config(next_cfg.shortcuts.clone());
+    state.antigravity.update_budgets(
+        next_cfg.ai.budget_5h_tokens,
+        next_cfg.ai.budget_weekly_tokens,
+    );
+    state.adb.set_auto_open(next_cfg.auto_open_on_usb);
+
+    if ics_changed {
+        state.agenda.set_ics_url(next_cfg.calendar_ics_url.clone());
+        if next_cfg.calendar_ics_url.is_some() {
+            let _ = state.agenda.refresh_now().await;
+        }
+    }
+
+    Ok(next_cfg)
+}
+
+async fn get_admin_config_handler(State(state): State<AppState>) -> Response {
+    let cfg = state.config_live.read().unwrap().clone();
+    (StatusCode::OK, Json(build_admin_config_view(&state, &cfg))).into_response()
+}
+
+async fn put_admin_config_handler(
+    State(state): State<AppState>,
+    Json(patch): Json<AdminConfigPatch>,
+) -> Response {
+    let mut cfg = if state.config_path.exists() {
+        crate::config::load_or_create(&state.config_path)
+            .unwrap_or_else(|_| state.config_live.read().unwrap().clone())
+    } else {
+        state.config_live.read().unwrap().clone()
+    };
+
+    if let Some(theme) = patch.theme {
+        cfg.theme = theme;
+    }
+    if let Some(auto_open) = patch.auto_open_on_usb {
+        cfg.auto_open_on_usb = auto_open;
+    }
+    if let Some(remote) = patch.remote_approval_enabled {
+        cfg.remote_approval_enabled = remote;
+    }
+    if let Some(timeout) = patch.approval_timeout_secs {
+        cfg.approval_timeout_secs = timeout;
+    }
+    if let Some(ics_opt) = patch.calendar_ics_url {
+        cfg.calendar_ics_url = ics_opt;
+    }
+    if let Some(widgets) = patch.home_widgets {
+        cfg.home_widgets = widgets;
+    }
+    if let Some(nm) = patch.night_mode {
+        cfg.night_mode = nm;
+    }
+    if let Some(w) = patch.weather {
+        cfg.weather = w;
+    }
+    if let Some(gh) = patch.github {
+        cfg.github.username = gh
+            .username
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        if let Some(env_name) = gh.token_env {
+            let trimmed = env_name.trim();
+            cfg.github.token_env = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            };
+        }
+        match gh.token_action.as_deref().unwrap_or("keep") {
+            "clear" => cfg.github.token = None,
+            "set" => {
+                cfg.github.token = gh
+                    .new_token
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty());
+            }
+            _ => {}
+        }
+    }
+    if let Some(ai) = patch.ai {
+        cfg.ai = ai;
+    }
+    if let Some(shortcuts) = patch.shortcuts {
+        cfg.shortcuts = shortcuts;
+    }
+
+    match apply_and_persist_config(&state, cfg).await {
+        Ok(saved) => (StatusCode::OK, Json(build_admin_config_view(&state, &saved))).into_response(),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err),
+    }
+}
+
+async fn put_admin_config_raw_handler(
+    State(state): State<AppState>,
+    Json(body): Json<RawConfigBody>,
+) -> Response {
+    let current = state.config_live.read().unwrap().clone();
+    let mut parsed: AppConfig = match serde_json::from_str(&body.raw_json) {
+        Ok(c) => c,
+        Err(err) => return json_error(StatusCode::BAD_REQUEST, format!("JSON inválido: {err}")),
+    };
+
+    // Never allow locking out the active server port/token via raw edit
+    parsed.port = current.port;
+    if parsed.token.trim().is_empty() || parsed.token == REDACTED_SECRET {
+        parsed.token = current.token.clone();
+    }
+    if parsed.github.token.as_deref() == Some(REDACTED_SECRET) {
+        parsed.github.token = current.github.token.clone();
+    }
+
+    match apply_and_persist_config(&state, parsed).await {
+        Ok(saved) => (StatusCode::OK, Json(build_admin_config_view(&state, &saved))).into_response(),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err),
+    }
+}
+
+async fn admin_open_phone_handler(State(state): State<AppState>) -> Response {
+    let Some(adb_path) = crate::monitors::adb::find_adb_path() else {
+        return json_error(StatusCode::BAD_REQUEST, "adb.exe não encontrado no PC");
+    };
+    let port = state.port;
+    let token = state.token.clone();
+    let res = tokio::task::spawn_blocking(move || -> Result<String, String> {
+        let mut cmd = std::process::Command::new(&adb_path);
+        cmd.arg("devices");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
+        }
+        let out = cmd.output().map_err(|e| format!("falha ao executar adb: {e}"))?;
+        let devices = crate::monitors::adb::parse_adb_devices(&String::from_utf8_lossy(&out.stdout));
+        let serial = devices
+            .first()
+            .cloned()
+            .ok_or_else(|| "nenhum celular Android conectado via USB".to_string())?;
+        let spec = format!("tcp:{port}");
+        let mut rev = std::process::Command::new(&adb_path);
+        rev.args(["-s", &serial, "reverse", &spec, &spec]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            rev.creation_flags(crate::monitors::CREATE_NO_WINDOW);
+        }
+        let _ = rev.output();
+
+        let url = format!("http://127.0.0.1:{port}/#token={token}");
+        let mut open = std::process::Command::new(&adb_path);
+        open.args([
+            "-s",
+            &serial,
+            "shell",
+            "am",
+            "start",
+            "-a",
+            "android.intent.action.VIEW",
+            "-d",
+            &url,
+        ]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            open.creation_flags(crate::monitors::CREATE_NO_WINDOW);
+        }
+        let open_out = open
+            .output()
+            .map_err(|e| format!("falha ao abrir no celular: {e}"))?;
+        if !open_out.status.success() {
+            return Err(String::from_utf8_lossy(&open_out.stderr).trim().to_string());
+        }
+        Ok(serial)
+    })
+    .await;
+
+    match res {
+        Ok(Ok(device)) => (StatusCode::OK, Json(json!({ "ok": true, "device": device }))).into_response(),
+        Ok(Err(err)) => json_error(StatusCode::BAD_REQUEST, err),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn admin_restart_adb_handler() -> Response {
+    let Some(adb_path) = crate::monitors::adb::find_adb_path() else {
+        return json_error(StatusCode::BAD_REQUEST, "adb.exe não encontrado no PC");
+    };
+    let res = tokio::task::spawn_blocking(move || -> Result<(), String> {
+        for sub in ["kill-server", "start-server"] {
+            let mut cmd = std::process::Command::new(&adb_path);
+            cmd.arg(sub);
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
+            }
+            let _ = cmd.output();
+            if sub == "kill-server" {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+        }
+        Ok(())
+    })
+    .await;
+
+    match res {
+        Ok(Ok(())) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Ok(Err(err)) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err.to_string()),
+    }
+}
+
+async fn admin_startup_handler(Json(body): Json<StartupToggleBody>) -> Response {
+    let res = if body.enabled {
+        crate::config::install_startup()
+    } else {
+        crate::config::uninstall_startup()
+    };
+    match res {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "startup_enabled": crate::config::startup_status() })),
+        )
+            .into_response(),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err),
+    }
+}
+
 pub fn build_router(state: AppState) -> Router {
     let sec_state = SecurityState {
         port: state.port,
@@ -627,6 +993,7 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/", get(index_handler))
+        .route("/admin", get(admin_handler))
         .route("/manifest.webmanifest", get(manifest_handler))
         .route("/icon-192.png", get(icon_192_handler))
         .route("/icon-512.png", get(icon_512_handler))
@@ -648,6 +1015,14 @@ pub fn build_router(state: AppState) -> Router {
             "/api/settings",
             get(get_settings_handler).post(update_settings_handler),
         )
+        .route(
+            "/api/config",
+            get(get_admin_config_handler).put(put_admin_config_handler),
+        )
+        .route("/api/config/raw", put(put_admin_config_raw_handler))
+        .route("/api/admin/open-phone", post(admin_open_phone_handler))
+        .route("/api/admin/restart-adb", post(admin_restart_adb_handler))
+        .route("/api/admin/startup", post(admin_startup_handler))
         .route("/api/system/lock", post(system_lock_handler))
         .route("/api/shortcuts/{id}/trigger", post(trigger_shortcut_handler))
         .route("/api/network/speedtest", post(trigger_speedtest_handler))
@@ -1812,5 +2187,146 @@ mod tests {
             drained.is_ok(),
             "SSE stream did not terminate promptly after shutdown signal"
         );
+    }
+
+    #[tokio::test]
+    async fn test_admin_page_and_config_endpoints_mask_secrets_and_persist() {
+        let (state, _media, tx, _dir) = make_test_state();
+        let expected_cfg_token = {
+            let mut cfg = state.config_live.write().unwrap();
+            cfg.token = "test-token-123".to_string();
+            cfg.github.token = Some("ghp_super_secret_token_9876".to_string());
+            save_config(&state.config_path, &cfg).unwrap();
+            cfg.token.clone()
+        };
+        let app = build_router(state.clone());
+
+        // GET /admin serves HTML without leaking token
+        let html_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/admin")
+                    .header("Host", "127.0.0.1:8765")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(html_resp.status(), StatusCode::OK);
+        let html_body = String::from_utf8(
+            html_resp.into_body().collect().await.unwrap().to_bytes().to_vec(),
+        )
+        .unwrap();
+        assert!(html_body.contains("DeskPulse Admin"));
+        assert!(!html_body.contains("test-token-123"));
+        assert!(!html_body.contains("ghp_super_secret_token_9876"));
+
+        // GET /api/config requires token
+        let unauth = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config")
+                    .header("Host", "127.0.0.1:8765")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
+
+        // GET /api/config returns masked secret preview and redacted raw_json
+        let cfg_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(cfg_resp.status(), StatusCode::OK);
+        let cfg_bytes = cfg_resp.into_body().collect().await.unwrap().to_bytes();
+        let cfg_str = String::from_utf8_lossy(&cfg_bytes);
+        assert!(!cfg_str.contains("ghp_super_secret_token_9876"));
+        assert!(!cfg_str.contains("test-token-123"));
+        let cfg_val: Value = serde_json::from_slice(&cfg_bytes).unwrap();
+        assert_eq!(cfg_val["github"]["token_set"], true);
+        assert_eq!(cfg_val["github"]["token_preview"], "ghp_••••9876");
+
+        // PUT /api/config updates theme & city while preserving github token
+        let put_body = json!({
+            "theme": "amber",
+            "auto_open_on_usb": false,
+            "weather": { "city": "Fortaleza", "latitude": -3.73, "longitude": -38.52, "unit": "c" },
+            "github": { "username": "devuser", "token_env": "GITHUB_TOKEN", "token_action": "keep", "new_token": null }
+        });
+        let put_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/config")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(put_body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(put_resp.status(), StatusCode::OK);
+        let saved = crate::config::load_or_create(&state.config_path).unwrap();
+        assert_eq!(saved.theme, "amber");
+        assert!(!saved.auto_open_on_usb);
+        assert_eq!(saved.weather.city, "Fortaleza");
+        assert_eq!(
+            saved.github.token.as_deref(),
+            Some("ghp_super_secret_token_9876"),
+            "token_action=keep must preserve existing github token"
+        );
+
+        // PUT /api/config/raw preserves redacted secrets & rejects invalid JSON
+        let bad_raw = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/config/raw")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json!({ "raw_json": "{broken" }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(bad_raw.status(), StatusCode::BAD_REQUEST);
+
+        let raw_text = cfg_val["raw_json"].as_str().unwrap().replace("midnight", "nord");
+        let ok_raw = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/config/raw")
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json!({ "raw_json": raw_text }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(ok_raw.status(), StatusCode::OK);
+        let saved2 = crate::config::load_or_create(&state.config_path).unwrap();
+        assert_eq!(saved2.theme, "nord");
+        assert_eq!(saved2.token, expected_cfg_token);
+        assert_eq!(saved2.github.token.as_deref(), Some("ghp_super_secret_token_9876"));
+
+        let _ = tx.send(true);
     }
 }

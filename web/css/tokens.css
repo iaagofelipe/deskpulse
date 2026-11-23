@@ -1,5 +1,7 @@
-﻿:root {
-  /* OLED Surface Palette */
+﻿:root,
+:root[data-theme="midnight"] {
+  /* Midnight OLED (Default) */
+  color-scheme: dark;
   --bg: #090b0e;
   --rail: #0d1114;
   --surface: #111619;
@@ -8,6 +10,10 @@
   --surface-active: #1c2630;
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.16);
+  --hover-tint: rgba(255, 255, 255, 0.05);
+  --subtle-tint: rgba(255, 255, 255, 0.03);
+  --track: rgba(255, 255, 255, 0.09);
+  --grid-line: rgba(255, 255, 255, 0.07);
 
   /* Typography Ink */
   --text: #f1f5f9;
@@ -35,6 +41,16 @@
   --amber-soft: rgba(245, 158, 11, 0.16);
   --red-soft: rgba(239, 68, 68, 0.16);
 
+  /* Semantic Badge & Control Inks */
+  --badge-ok-ink: #86efac;
+  --badge-warn-ink: #fcd34d;
+  --badge-err-ink: #fca5a5;
+  --badge-ai-ink: #f8b498;
+  --badge-accent-ink: #93c5fd;
+  --play-bg: #ffffff;
+  --play-ink: #090b0e;
+  --play-shadow: 0 8px 26px rgba(255, 255, 255, 0.2);
+
   /* GitHub Heatmap Scale */
   --gh-0: #161f24;
   --gh-1: #0e4429;
@@ -61,4 +77,211 @@
   --t-med: 240ms;
   --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.32);
   --shadow-modal: 0 22px 64px rgba(0, 0, 0, 0.78);
+}
+
+:root[data-theme="pure-black"] {
+  /* Pure Black (#000 AMOLED) */
+  color-scheme: dark;
+  --bg: #000000;
+  --rail: #000000;
+  --surface: #07090c;
+  --surface-2: #0f1318;
+  --surface-hover: #151b22;
+  --surface-active: #141c26;
+  --border: rgba(255, 255, 255, 0.11);
+  --border-strong: rgba(255, 255, 255, 0.22);
+  --hover-tint: rgba(255, 255, 255, 0.06);
+  --subtle-tint: rgba(255, 255, 255, 0.03);
+  --track: rgba(255, 255, 255, 0.11);
+  --grid-line: rgba(255, 255, 255, 0.08);
+
+  --text: #ffffff;
+  --text-2: #d4dce6;
+  --muted: #8494a6;
+
+  --cpu: #38bdf8;
+  --gpu: #2dd4bf;
+  --ram: #c084fc;
+  --vram: #f472b6;
+  --ai: #fb923c;
+  --green: #22c55e;
+  --amber: #fbbf24;
+  --red: #f87171;
+  --accent: #38bdf8;
+
+  --cpu-soft: rgba(56, 189, 248, 0.15);
+  --gpu-soft: rgba(45, 212, 191, 0.15);
+  --ram-soft: rgba(192, 132, 252, 0.15);
+  --vram-soft: rgba(244, 114, 182, 0.15);
+  --ai-soft: rgba(251, 146, 60, 0.17);
+
+  --gh-0: #11161b;
+  --shadow-card: none;
+}
+
+:root[data-theme="amber"] {
+  /* Cockpit Amber (Warm Night-Vision) */
+  color-scheme: dark;
+  --bg: #0c0805;
+  --rail: #110b07;
+  --surface: #17100a;
+  --surface-2: #21170e;
+  --surface-hover: #2b1f13;
+  --surface-active: #302113;
+  --border: rgba(251, 191, 36, 0.12);
+  --border-strong: rgba(251, 191, 36, 0.24);
+  --hover-tint: rgba(251, 191, 36, 0.07);
+  --subtle-tint: rgba(251, 191, 36, 0.04);
+  --track: rgba(251, 191, 36, 0.12);
+  --grid-line: rgba(251, 191, 36, 0.09);
+
+  --text: #fef3c7;
+  --text-2: #e6cfa3;
+  --muted: #9e8462;
+
+  --cpu: #f59e0b;
+  --gpu: #fb923c;
+  --ram: #eab308;
+  --vram: #f43f5e;
+  --ai: #ff7b3b;
+  --green: #84cc16;
+  --amber: #f59e0b;
+  --red: #ef4444;
+  --accent: #f59e0b;
+
+  --cpu-soft: rgba(245, 158, 11, 0.16);
+  --gpu-soft: rgba(251, 146, 60, 0.16);
+  --ram-soft: rgba(234, 179, 8, 0.15);
+  --vram-soft: rgba(244, 63, 94, 0.16);
+  --ai-soft: rgba(255, 123, 59, 0.18);
+  --green-soft: rgba(132, 204, 22, 0.15);
+
+  --badge-ok-ink: #bef264;
+  --badge-warn-ink: #fde68a;
+  --badge-err-ink: #fca5a5;
+  --badge-ai-ink: #fdba74;
+  --badge-accent-ink: #fcd34d;
+  --play-bg: #fef3c7;
+  --play-ink: #17100a;
+  --play-shadow: 0 8px 26px rgba(245, 158, 11, 0.24);
+
+  --gh-0: #21170e;
+  --gh-1: #5c3409;
+  --gh-2: #92400e;
+  --gh-3: #d97706;
+  --gh-4: #fbbf24;
+  --shadow-card: 0 4px 18px rgba(0, 0, 0, 0.45);
+}
+
+:root[data-theme="nord"] {
+  /* Nord Frost */
+  color-scheme: dark;
+  --bg: #1b212c;
+  --rail: #202734;
+  --surface: #252d3b;
+  --surface-2: #2e3748;
+  --surface-hover: #364155;
+  --surface-active: #39465c;
+  --border: rgba(216, 222, 233, 0.1);
+  --border-strong: rgba(216, 222, 233, 0.2);
+  --hover-tint: rgba(216, 222, 233, 0.06);
+  --subtle-tint: rgba(216, 222, 233, 0.03);
+  --track: rgba(216, 222, 233, 0.11);
+  --grid-line: rgba(216, 222, 233, 0.08);
+
+  --text: #eceff4;
+  --text-2: #d8dee9;
+  --muted: #8f9eb5;
+
+  --cpu: #88c0d0;
+  --gpu: #8fbcbb;
+  --ram: #b48ead;
+  --vram: #d08770;
+  --ai: #d08770;
+  --green: #a3be8c;
+  --amber: #ebcb8b;
+  --red: #bf616a;
+  --accent: #88c0d0;
+
+  --cpu-soft: rgba(136, 192, 208, 0.16);
+  --gpu-soft: rgba(143, 188, 187, 0.16);
+  --ram-soft: rgba(180, 142, 173, 0.16);
+  --vram-soft: rgba(208, 135, 112, 0.16);
+  --ai-soft: rgba(208, 135, 112, 0.18);
+  --green-soft: rgba(163, 190, 140, 0.16);
+  --amber-soft: rgba(235, 203, 139, 0.16);
+  --red-soft: rgba(191, 97, 106, 0.2);
+
+  --badge-ok-ink: #c2d8ae;
+  --badge-warn-ink: #f3dca7;
+  --badge-err-ink: #e59aa1;
+  --badge-ai-ink: #e4b09e;
+  --badge-accent-ink: #a9d5e2;
+  --play-bg: #eceff4;
+  --play-ink: #1b212c;
+  --play-shadow: 0 8px 24px rgba(136, 192, 208, 0.22);
+
+  --gh-0: #2e3748;
+  --gh-1: #3c5446;
+  --gh-2: #547a5c;
+  --gh-3: #7ca376;
+  --gh-4: #a3be8c;
+  --shadow-card: 0 4px 16px rgba(10, 14, 22, 0.28);
+}
+
+:root[data-theme="daylight"] {
+  /* Daylight Claro */
+  color-scheme: light;
+  --bg: #eef2f7;
+  --rail: #e3e9f1;
+  --surface: #ffffff;
+  --surface-2: #f1f5f9;
+  --surface-hover: #e2e8f0;
+  --surface-active: #dbe7f7;
+  --border: rgba(15, 23, 42, 0.09);
+  --border-strong: rgba(15, 23, 42, 0.18);
+  --hover-tint: rgba(15, 23, 42, 0.05);
+  --subtle-tint: rgba(15, 23, 42, 0.03);
+  --track: rgba(15, 23, 42, 0.1);
+  --grid-line: rgba(15, 23, 42, 0.08);
+
+  --text: #0f172a;
+  --text-2: #334155;
+  --muted: #64748b;
+
+  --cpu: #2563eb;
+  --gpu: #0d9488;
+  --ram: #7c3aed;
+  --vram: #db2777;
+  --ai: #c2410c;
+  --green: #16a34a;
+  --amber: #d97706;
+  --red: #dc2626;
+  --accent: #2563eb;
+
+  --cpu-soft: rgba(37, 99, 235, 0.12);
+  --gpu-soft: rgba(13, 148, 136, 0.12);
+  --ram-soft: rgba(124, 58, 237, 0.12);
+  --vram-soft: rgba(219, 39, 119, 0.12);
+  --ai-soft: rgba(194, 65, 12, 0.12);
+  --green-soft: rgba(22, 163, 74, 0.13);
+  --amber-soft: rgba(217, 119, 6, 0.14);
+  --red-soft: rgba(220, 38, 38, 0.13);
+
+  --badge-ok-ink: #15803d;
+  --badge-warn-ink: #b45309;
+  --badge-err-ink: #b91c1c;
+  --badge-ai-ink: #c2410c;
+  --badge-accent-ink: #1d4ed8;
+  --play-bg: #0f172a;
+  --play-ink: #ffffff;
+  --play-shadow: 0 8px 22px rgba(15, 23, 42, 0.18);
+
+  --gh-0: #e2e8f0;
+  --gh-1: #9be9a8;
+  --gh-2: #40c463;
+  --gh-3: #30a14e;
+  --gh-4: #216e39;
+  --shadow-card: 0 2px 10px rgba(15, 23, 42, 0.06);
+  --shadow-modal: 0 20px 56px rgba(15, 23, 42, 0.28);
 }

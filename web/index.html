@@ -82,6 +82,19 @@
     </div>
   </div>
 
+  <div id="themeOverlay" class="theme-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="themeTitle">
+    <div class="theme-sheet">
+      <div class="theme-head">
+        <div class="theme-head-left">
+          <span class="card-label" style="color:var(--accent)">Aparência</span>
+          <h2 id="themeTitle" class="theme-title">Escolher tema</h2>
+        </div>
+        <button id="themeCloseBtn" type="button" class="pill-btn" aria-label="Fechar seletor de temas">Fechar</button>
+      </div>
+      <div id="themeGrid" class="theme-grid" role="radiogroup" aria-label="Temas disponíveis"></div>
+    </div>
+  </div>
+
   <div id="approvalOverlay" class="approval-overlay hidden" role="dialog" aria-modal="true" aria-label="Aprovação remota pendente">
     <div id="approvalMount" class="approval-card"></div>
   </div>

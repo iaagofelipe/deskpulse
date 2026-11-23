@@ -111,7 +111,7 @@ export function renderArcGauge({
   const safeSub = esc(sub);
 
   return `<svg class="gauge-svg" viewBox="0 0 132 120" role="img" aria-label="${safeLabel} ${esc(formattedVal)}${unitText}">
-  <path d="${trackPath}" fill="none" stroke="rgba(255,255,255,0.09)" stroke-width="9" stroke-linecap="round"/>
+  <path d="${trackPath}" fill="none" stroke="var(--track)" stroke-width="9" stroke-linecap="round"/>
   ${valuePath ? `<path d="${valuePath}" fill="none" stroke="${safeCol}" stroke-width="9" stroke-linecap="round"/>` : ''}
   <text x="${cx}" y="65" text-anchor="middle" fill="var(--text)" font-size="23" font-weight="700" class="num" style="font-variant-numeric:tabular-nums">${esc(formattedVal)}${unitText ? `<tspan font-size="12" font-weight="600" fill="var(--muted)" dx="1">${unitText}</tspan>` : ''}</text>
   ${safeLabel ? `<text x="${cx}" y="84" text-anchor="middle" fill="var(--muted)" font-size="10" font-weight="700" letter-spacing="0.08em">${safeLabel.toUpperCase()}</text>` : ''}
@@ -171,7 +171,7 @@ export function renderDualLineChart({
 
   const guides = [0, 0.5, 1].map((frac) => {
     const y = (padT + plotH * frac).toFixed(2);
-    return `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1" stroke-dasharray="${frac === 1 ? '' : '3 4'}"/>`;
+    return `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="var(--grid-line)" stroke-width="1" stroke-dasharray="${frac === 1 ? '' : '3 4'}"/>`;
   }).join('');
 
   const buildSeriesSvg = (arr, col, withArea, drawLoss) => {
@@ -257,7 +257,7 @@ export function renderBarChart({
 
   const guides = [0, 0.5, 1].map((frac) => {
     const y = (padT + plotH * frac).toFixed(2);
-    return `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+    return `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="var(--grid-line)" stroke-width="1"/>`;
   }).join('');
 
   if (!list.length) {
@@ -332,7 +332,7 @@ export function renderCompareBars({
 
   const guides = [0, 0.5, 1].map((frac) => {
     const y = (padT + plotH * frac).toFixed(2);
-    return `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="rgba(255,255,255,0.07)" stroke-width="1"/>`;
+    return `<line x1="${padL}" y1="${y}" x2="${w - padR}" y2="${y}" stroke="var(--grid-line)" stroke-width="1"/>`;
   }).join('');
 
   const slotW = plotW / count;
@@ -432,7 +432,7 @@ export function renderGithubHeatmap({
       const x = leftPad + wIdx * step;
       const y = topPad + dIdx * step;
       const isToday = !compact && item.date && item.date === todayIso;
-      const strokeAttr = isToday ? ' stroke="#ffffff" stroke-width="1.3"' : '';
+      const strokeAttr = isToday ? ' stroke="var(--text)" stroke-width="1.3"' : '';
       const tip = item.date
         ? `<title>${esc(item.date)}: ${esc(item.count ?? 0)} contribuições</title>`
         : '';
@@ -465,7 +465,7 @@ export function renderTimerRing({
 
   return `<svg viewBox="0 0 220 220" role="img" aria-label="Timer ${safeLabel} ${safeSub}">
   ${active ? `<circle cx="${cx}" cy="${cy}" r="98" fill="none" stroke="rgba(34,197,94,0.16)" stroke-width="2"/>` : ''}
-  <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="11"/>
+  <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="var(--track)" stroke-width="11"/>
   <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${strokeColor}" stroke-width="11" stroke-linecap="round" stroke-dasharray="${circumference.toFixed(2)}" stroke-dashoffset="${dashOffset.toFixed(2)}" transform="rotate(-90 ${cx} ${cy})" style="transition:stroke-dashoffset 220ms linear, stroke 200ms ease"/>
   <text x="${cx}" y="${safeSub ? '113' : '122'}" text-anchor="middle" fill="var(--text)" font-size="42" font-weight="700" letter-spacing="-0.03em" class="num" style="font-variant-numeric:tabular-nums">${safeLabel}</text>
   ${safeSub ? `<text x="${cx}" y="139" text-anchor="middle" fill="${active ? 'var(--green)' : 'var(--muted)'}" font-size="12" font-weight="600" letter-spacing="0.06em">${safeSub.toUpperCase()}</text>` : ''}

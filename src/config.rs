@@ -226,6 +226,24 @@ fn default_night_mode_dim_locked() -> bool {
     true
 }
 
+pub fn default_theme() -> String {
+    "midnight".to_string()
+}
+
+fn default_auto_open_on_usb() -> bool {
+    true
+}
+
+pub fn normalize_theme(raw: &str) -> &'static str {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "pure-black" | "pure_black" | "black" | "oled" => "pure-black",
+        "amber" | "cockpit" | "warm" | "retro" => "amber",
+        "nord" | "frost" => "nord",
+        "daylight" | "light" | "paper" => "daylight",
+        _ => "midnight",
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NightModeConfig {
     #[serde(default = "default_night_mode_enabled")]
@@ -270,6 +288,10 @@ pub struct AppConfig {
     pub home_widgets: Vec<String>,
     #[serde(default)]
     pub night_mode: NightModeConfig,
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    #[serde(default = "default_auto_open_on_usb")]
+    pub auto_open_on_usb: bool,
 }
 
 impl Default for AppConfig {
@@ -286,6 +308,8 @@ impl Default for AppConfig {
             shortcuts: default_shortcuts(),
             home_widgets: default_home_widgets(),
             night_mode: NightModeConfig::default(),
+            theme: default_theme(),
+            auto_open_on_usb: default_auto_open_on_usb(),
         }
     }
 }
@@ -696,5 +720,19 @@ mod tests {
         assert_eq!(live.read().unwrap().port, initial.port);
         assert_eq!(rx.borrow().port, initial.port);
         let _ = shutdown_tx.send(true);
+    }
+
+    #[test]
+    fn test_normalize_theme_supports_curated_themes_and_aliases() {
+        assert_eq!(normalize_theme("midnight"), "midnight");
+        assert_eq!(normalize_theme("pure-black"), "pure-black");
+        assert_eq!(normalize_theme("OLED"), "pure-black");
+        assert_eq!(normalize_theme("amber"), "amber");
+        assert_eq!(normalize_theme("cockpit"), "amber");
+        assert_eq!(normalize_theme("nord"), "nord");
+        assert_eq!(normalize_theme("daylight"), "daylight");
+        assert_eq!(normalize_theme("light"), "daylight");
+        assert_eq!(normalize_theme("unknown-theme"), "midnight");
+        assert_eq!(AppConfig::default().theme, "midnight");
     }
 }

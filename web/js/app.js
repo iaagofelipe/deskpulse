@@ -13,6 +13,45 @@ import { render as renderShortcuts } from './views/shortcuts.js';
 import { render as renderTimer } from './views/timer.js';
 
 const SOUND_STORAGE_KEY = 'deskpulse_sound';
+const THEME_STORAGE_KEY = 'deskpulse_theme';
+const THEMES = [
+  {
+    id: 'midnight',
+    label: 'Midnight',
+    sub: 'OLED padrão',
+    metaColor: '#090b0e',
+    preview: ['#090b0e', '#111619', '#60a5fa', '#4fd1c5', '#e07a52'],
+  },
+  {
+    id: 'pure-black',
+    label: 'Pure Black',
+    sub: 'AMOLED #000',
+    metaColor: '#000000',
+    preview: ['#000000', '#0a0d12', '#38bdf8', '#2dd4bf', '#fb923c'],
+  },
+  {
+    id: 'amber',
+    label: 'Amber',
+    sub: 'Cockpit noturno',
+    metaColor: '#0c0805',
+    preview: ['#0c0805', '#1a120b', '#f59e0b', '#fb923c', '#84cc16'],
+  },
+  {
+    id: 'nord',
+    label: 'Nord Frost',
+    sub: 'Ártico suave',
+    metaColor: '#1b212c',
+    preview: ['#1b212c', '#252d3b', '#88c0d0', '#a3be8c', '#b48ead'],
+  },
+  {
+    id: 'daylight',
+    label: 'Daylight',
+    sub: 'Claro limpo',
+    metaColor: '#eef2f7',
+    preview: ['#eef2f7', '#ffffff', '#2563eb', '#0d9488', '#c2410c'],
+  },
+];
+const THEME_IDS = new Set(THEMES.map((t) => t.id));
 const WAKE_DURATION_MS = 30_000;
 const BURN_IN_SHIFT_MS = 60_000;
 const BURN_IN_OFFSETS = [
@@ -55,6 +94,9 @@ const dom = {
   ssClock: document.getElementById('ssClock'),
   ssDate: document.getElementById('ssDate'),
   ssHint: document.getElementById('ssHint'),
+  themeOverlay: document.getElementById('themeOverlay'),
+  themeGrid: document.getElementById('themeGrid'),
+  themeCloseBtn: document.getElementById('themeCloseBtn'),
   approvalOverlay: document.getElementById('approvalOverlay'),
   approvalMount: document.getElementById('approvalMount'),
   tokenOverlay: document.getElementById('tokenOverlay'),
@@ -70,12 +112,112 @@ let activeTab = 'home';
 let streamHandle = null;
 let connStatus = 'connecting';
 let soundEnabled = loadSoundPref();
+let currentTheme = 'midnight';
+let hasLocalThemePref = false;
+let lastServerTheme = null;
 let wakeUntilMs = 0;
 let burnInIndex = 0;
 let renderedApprovalKey = null;
 let approvalTickTimer = null;
 let approvalSubmitting = false;
 let lastClockMinute = '';
+
+function normalizeThemeId(raw) {
+  const clean = String(raw || '').trim().toLowerCase();
+  if (THEME_IDS.has(clean)) return clean;
+  if (clean === 'oled' || clean === 'black' || clean === 'pure_black') return 'pure-black';
+  if (clean === 'light' || clean === 'paper') return 'daylight';
+  if (clean === 'cockpit' || clean === 'warm') return 'amber';
+  return 'midnight';
+}
+
+function renderThemeGrid() {
+  if (!dom.themeGrid) return;
+  dom.themeGrid.innerHTML = THEMES.map((t) => {
+    const active = t.id === currentTheme;
+    const [bg, surf, c1, c2, c3] = t.preview;
+    return `
+      <button type="button" class="theme-option ${active ? 'is-active' : ''}" role="radio" aria-checked="${active ? 'true' : 'false'}" data-theme-id="${t.id}">
+        ${active ? `<span class="theme-check" aria-hidden="true">${icons.icon('check', 11)}</span>` : ''}
+        <div class="theme-preview" style="background:${bg}">
+          <div class="theme-preview-bars">
+            <span class="theme-dot" style="background:${c1}"></span>
+            <span class="theme-dot" style="background:${c2}"></span>
+            <span class="theme-dot" style="background:${c3}"></span>
+          </div>
+          <div class="theme-preview-card" style="background:${surf}">
+            <span style="width:48%;height:4px;border-radius:99px;background:${c1};opacity:0.85"></span>
+            <span style="width:26%;height:4px;border-radius:99px;background:${c2};opacity:0.7"></span>
+          </div>
+        </div>
+        <div class="theme-option-name">${api.escapeHtml(t.label)}</div>
+        <div class="theme-option-sub">${api.escapeHtml(t.sub)}</div>
+      </button>`;
+  }).join('');
+}
+
+function applyTheme(themeId, { persist = true } = {}) {
+  const next = normalizeThemeId(themeId);
+  currentTheme = next;
+  document.documentElement.dataset.theme = next;
+  const meta = THEMES.find((t) => t.id === next);
+  const metaEl = document.querySelector('meta[name="theme-color"]');
+  if (meta && metaEl) {
+    metaEl.setAttribute('content', meta.metaColor);
+  }
+  if (persist) {
+    hasLocalThemePref = true;
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Ignore storage errors
+    }
+  }
+  renderThemeGrid();
+}
+
+function loadSavedTheme() {
+  try {
+    const saved = localStorage.getItem(THEME_STORAGE_KEY);
+    if (saved && THEME_IDS.has(saved)) {
+      hasLocalThemePref = true;
+      applyTheme(saved, { persist: false });
+      return;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  applyTheme('midnight', { persist: false });
+}
+
+function openThemePicker() {
+  if (!dom.themeOverlay) return;
+  renderThemeGrid();
+  dom.themeOverlay.classList.remove('hidden');
+  updateScreensaver();
+}
+
+function closeThemePicker() {
+  if (!dom.themeOverlay) return;
+  dom.themeOverlay.classList.add('hidden');
+  updateScreensaver();
+}
+
+function syncThemeFromServer(serverThemeRaw) {
+  if (!serverThemeRaw) return;
+  const serverTheme = normalizeThemeId(serverThemeRaw);
+  if (lastServerTheme === null) {
+    lastServerTheme = serverTheme;
+    if (!hasLocalThemePref) {
+      applyTheme(serverTheme, { persist: false });
+    }
+    return;
+  }
+  if (serverTheme !== lastServerTheme) {
+    lastServerTheme = serverTheme;
+    applyTheme(serverTheme, { persist: true });
+  }
+}
 
 function loadSoundPref() {
   try {
@@ -273,6 +415,9 @@ function buildContext(tabId) {
     setTimerBadge,
     soundEnabled,
     toggleSound,
+    currentTheme,
+    openThemePicker,
+    setTheme: (id) => applyTheme(id, { persist: true }),
     showTokenGate,
     alertUser: playAlert,
     playChime: playChimeSafe,
@@ -476,6 +621,9 @@ function renderApprovalOverlay() {
   if (dom.screensaverOverlay) {
     dom.screensaverOverlay.classList.add('hidden');
   }
+  if (dom.themeOverlay) {
+    dom.themeOverlay.classList.add('hidden');
+  }
   dom.approvalOverlay.classList.remove('hidden');
 
   if (renderedApprovalKey !== key) {
@@ -549,6 +697,7 @@ function isNightHour(hour, startHour, endHour) {
 function evaluateScreensaverReason() {
   if (!state || !state.night_mode) return null;
   if (dom.tokenOverlay && !dom.tokenOverlay.classList.contains('hidden')) return null;
+  if (dom.themeOverlay && !dom.themeOverlay.classList.contains('hidden')) return null;
   if (Array.isArray(state.approvals) && state.approvals.length > 0) return null;
   if (Date.now() < wakeUntilMs) return null;
 
@@ -608,6 +757,7 @@ function applyBurnInShift() {
 
 function handleStateUpdate(nextState) {
   state = nextState;
+  syncThemeFromServer(nextState?.theme);
   updateConnectionIndicators();
   updateAiNavBadge();
   renderApprovalOverlay();
@@ -706,6 +856,28 @@ function wireEvents() {
     dom.tokenCloseBtn.addEventListener('click', hideTokenGate);
   }
 
+  if (dom.themeCloseBtn) {
+    dom.themeCloseBtn.addEventListener('click', closeThemePicker);
+  }
+  if (dom.themeOverlay) {
+    dom.themeOverlay.addEventListener('click', (ev) => {
+      if (ev.target === dom.themeOverlay) {
+        closeThemePicker();
+        return;
+      }
+      const opt = ev.target.closest('.theme-option[data-theme-id]');
+      if (opt) {
+        applyTheme(opt.dataset.themeId, { persist: true });
+        closeThemePicker();
+      }
+    });
+  }
+  window.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && dom.themeOverlay && !dom.themeOverlay.classList.contains('hidden')) {
+      closeThemePicker();
+    }
+  });
+
   if (dom.screensaverOverlay) {
     dom.screensaverOverlay.addEventListener('click', wakeScreensaver);
     dom.screensaverOverlay.addEventListener('keydown', (ev) => {
@@ -750,6 +922,7 @@ function startClockTimers() {
 }
 
 function init() {
+  loadSavedTheme();
   hydrateRailIcons();
   syncFullscreenIcon();
   wireEvents();
