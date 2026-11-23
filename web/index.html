@@ -1,46 +1,110 @@
-﻿<!DOCTYPE html>
-<html lang='pt-BR'>
+﻿<!doctype html>
+<html lang="pt-BR">
 <head>
-  <meta charset='utf-8'>
-  <meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>
-  <title>DeskPulse Appliance</title>
-  <link rel='stylesheet' href='/assets/css/tokens.css'>
-  <link rel='stylesheet' href='/assets/css/layout.css'>
-  <link rel='stylesheet' href='/assets/css/views.css'>
-  <link rel='manifest' href='/manifest.webmanifest'>
-  <link rel='icon' href='/icon.svg' type='image/svg+xml'>
-  <link rel='apple-touch-icon' href='/icon-192.png'>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#090b0e">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>DeskPulse</title>
+  <link rel="stylesheet" href="/assets/css/tokens.css">
+  <link rel="stylesheet" href="/assets/css/layout.css">
+  <link rel="stylesheet" href="/assets/css/views.css">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
 </head>
 <body>
-  <div id='navRail'>
-    <button id='btn-home' class='nav-btn' data-tab='home'></button>
-    <button id='btn-pc' class='nav-btn' data-tab='pc'></button>
-    <button id='btn-ai' class='nav-btn' data-tab='ai'><span id='aiNavBadge'></span></button>
-    <button id='btn-agenda' class='nav-btn' data-tab='agenda'></button>
-    <button id='btn-weather' class='nav-btn' data-tab='weather'></button>
-    <button id='btn-media' class='nav-btn' data-tab='media'></button>
-    <button id='btn-github' class='nav-btn' data-tab='github'></button>
-    <button id='btn-shortcuts' class='nav-btn' data-tab='shortcuts'></button>
-    <button id='btn-timer' class='nav-btn' data-tab='timer'><span id='timerNavBadge'></span></button>
-    <div class='spacer' style='flex:1'></div>
-    <div id='connStatusIcon'></div>
-    <div id='usbStatusIcon'></div>
-    <button id='fullscreenBtn' class='nav-btn'></button>
+  <div class="app">
+    <nav id="navRail" class="nav-rail" aria-label="Navegação Principal">
+      <div class="nav-items" role="tablist" aria-orientation="vertical">
+        <button class="nav-btn active" type="button" role="tab" aria-selected="true" aria-controls="view-home" data-tab="home" aria-label="Início" title="Início">
+          <span class="nav-icon" data-icon="home" aria-hidden="true"></span>
+        </button>
+        <button class="nav-btn" type="button" role="tab" aria-selected="false" aria-controls="view-pc" data-tab="pc" aria-label="PC e Internet" title="PC e Internet">
+          <span class="nav-icon" data-icon="pc" aria-hidden="true"></span>
+        </button>
+        <button class="nav-btn" type="button" role="tab" aria-selected="false" aria-controls="view-ai" data-tab="ai" aria-label="IA e Agentes" title="IA e Agentes">
+          <span class="nav-icon" data-icon="ai" aria-hidden="true"></span>
+          <span id="aiNavBadge" class="nav-badge hidden" aria-live="polite"></span>
+        </button>
+        <button class="nav-btn" type="button" role="tab" aria-selected="false" aria-controls="view-agenda" data-tab="agenda" aria-label="Agenda e Tarefas" title="Agenda e Tarefas">
+          <span class="nav-icon" data-icon="agenda" aria-hidden="true"></span>
+        </button>
+        <button class="nav-btn" type="button" role="tab" aria-selected="false" aria-controls="view-weather" data-tab="weather" aria-label="Clima" title="Clima">
+          <span class="nav-icon" data-icon="weather" aria-hidden="true"></span>
+        </button>
+        <button class="nav-btn" type="button" role="tab" aria-selected="false" aria-controls="view-media" data-tab="media" aria-label="Mídia" title="Mídia">
+          <span class="nav-icon" data-icon="media" aria-hidden="true"></span>
+        </button>
+        <button class="nav-btn" type="button" role="tab" aria-selected="false" aria-controls="view-github" data-tab="github" aria-label="GitHub" title="GitHub">
+          <span class="nav-icon" data-icon="github" aria-hidden="true"></span>
+        </button>
+        <button class="nav-btn" type="button" role="tab" aria-selected="false" aria-controls="view-shortcuts" data-tab="shortcuts" aria-label="Atalhos" title="Atalhos">
+          <span class="nav-icon" data-icon="shortcuts" aria-hidden="true"></span>
+        </button>
+        <button class="nav-btn" type="button" role="tab" aria-selected="false" aria-controls="view-timer" data-tab="timer" aria-label="Timer" title="Timer">
+          <span class="nav-icon" data-icon="timer" aria-hidden="true"></span>
+          <span id="timerNavBadge" class="nav-badge timer-badge hidden" aria-live="polite"></span>
+        </button>
+      </div>
+
+      <div class="nav-bottom">
+        <button id="fullscreenBtn" class="nav-btn" type="button" aria-label="Tela cheia" title="Tela cheia">
+          <span class="nav-icon" data-icon="fullscreen" aria-hidden="true"></span>
+        </button>
+        <div id="connCluster" class="conn-cluster" title="Status de conexão" aria-live="polite">
+          <span id="connIcon" class="status-dot status-warn" title="Conexão SSE com o PC" aria-label="Conexão com o PC"></span>
+          <span id="usbIcon" class="status-dot status-muted" title="Ponte USB ADB" aria-label="Ponte USB ADB"></span>
+        </div>
+      </div>
+    </nav>
+
+    <main id="viewsStage" class="views-stage">
+      <section id="view-home" class="view active" role="tabpanel" data-view="home" aria-label="Início"></section>
+      <section id="view-pc" class="view" role="tabpanel" data-view="pc" aria-label="PC e Internet"></section>
+      <section id="view-ai" class="view" role="tabpanel" data-view="ai" aria-label="IA e Agentes"></section>
+      <section id="view-agenda" class="view" role="tabpanel" data-view="agenda" aria-label="Agenda e Tarefas"></section>
+      <section id="view-weather" class="view" role="tabpanel" data-view="weather" aria-label="Clima"></section>
+      <section id="view-media" class="view" role="tabpanel" data-view="media" aria-label="Mídia"></section>
+      <section id="view-github" class="view" role="tabpanel" data-view="github" aria-label="GitHub"></section>
+      <section id="view-shortcuts" class="view" role="tabpanel" data-view="shortcuts" aria-label="Atalhos"></section>
+      <section id="view-timer" class="view" role="tabpanel" data-view="timer" aria-label="Timer"></section>
+    </main>
   </div>
-  <div id='viewsStage' class='views-stage'>
-    <div id='view-home' class='view active'></div>
-    <div id='view-pc' class='view'></div>
-    <div id='view-ai' class='view'></div>
-    <div id='view-agenda' class='view'></div>
-    <div id='view-weather' class='view'></div>
-    <div id='view-media' class='view'></div>
-    <div id='view-github' class='view'></div>
-    <div id='view-shortcuts' class='view'></div>
-    <div id='view-timer' class='view'></div>
+
+  <div id="screensaverOverlay" class="screensaver-overlay hidden" role="button" tabindex="0" aria-label="Modo descanso OLED — toque para acordar">
+    <div id="ssContent" class="ss-content">
+      <div id="ssClock" class="ss-clock num">00:00</div>
+      <div id="ssDate" class="ss-date"></div>
+      <div id="ssHint" class="ss-hint">Toque para acordar</div>
+    </div>
   </div>
-  <div id='screensaverOverlay' class='screensaver-overlay hidden'></div>
-  <div id='approvalOverlay' class='approval-overlay hidden'></div>
-  <div id='tokenOverlay' class='token-overlay hidden'></div>
-  <script type='module' src='/assets/js/app.js'></script>
+
+  <div id="approvalOverlay" class="approval-overlay hidden" role="dialog" aria-modal="true" aria-label="Aprovação remota pendente">
+    <div id="approvalMount" class="approval-card"></div>
+  </div>
+
+  <div id="tokenOverlay" class="token-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="tokenTitle">
+    <div class="token-card">
+      <div class="token-head">
+        <span class="badge badge-accent">Autenticação</span>
+        <h2 id="tokenTitle" class="token-title">Conectar ao DeskPulse</h2>
+        <p class="token-desc">Cole o token exibido no DeskPulse do PC ou escaneie o QR Code de pareamento.</p>
+      </div>
+      <form id="tokenForm" class="token-form" autocomplete="off">
+        <label class="sr-only" for="tokenInput">Token de acesso</label>
+        <input id="tokenInput" class="token-input" type="password" inputmode="text" spellcheck="false" autocomplete="off" placeholder="Token de acesso do DeskPulse" required>
+        <div id="tokenError" class="token-error hidden" role="alert"></div>
+        <div class="token-actions">
+          <button id="tokenCloseBtn" class="pill-btn" type="button">Cancelar</button>
+          <button id="saveTokenBtn" class="pill-btn pill-primary" type="submit">Conectar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="/assets/js/app.js"></script>
 </body>
 </html>
