@@ -9,6 +9,7 @@ mod security;
 mod server;
 mod shortcuts;
 mod todos;
+mod tray;
 mod web_assets;
 
 use std::env;
@@ -130,7 +131,7 @@ where
     }
 }
 
-async fn run_serve() -> Result<(), String> {
+async fn run_serve(no_tray: bool) -> Result<(), String> {
     let cfg_path = config::default_config_path();
     let initial_cfg = config::load_or_create(&cfg_path)?;
 
@@ -231,6 +232,23 @@ async fn run_serve() -> Result<(), String> {
         config_live,
     });
 
+    let _tray_handle: Option<tray::TrayHandle> = if !no_tray {
+        match tray::spawn_tray(tray::TrayOptions {
+            port: initial_cfg.port,
+            token: initial_cfg.token.clone(),
+            config_path: cfg_path.clone(),
+            shutdown_tx: shutdown_tx.clone(),
+        }) {
+            Ok(handle) => Some(handle),
+            Err(err) => {
+                eprintln!("Aviso: falha ao iniciar bandeja do sistema: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     println!(
         "DeskPulse rodando em http://127.0.0.1:{}/#token={}",
         initial_cfg.port, initial_cfg.token
@@ -241,14 +259,28 @@ async fn run_serve() -> Result<(), String> {
         initial_cfg.port, initial_cfg.token
     );
 
+    let mut server_shutdown_rx = shutdown_rx.clone();
     let result = axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = async {
+                    loop {
+                        if *server_shutdown_rx.borrow() {
+                            break;
+                        }
+                        if server_shutdown_rx.changed().await.is_err() {
+                            break;
+                        }
+                    }
+                } => {}
+            }
         })
         .await
         .map_err(|e| format!("server error: {e}"));
 
     let _ = shutdown_tx.send(true);
+    drop(_tray_handle);
     result
 }
 
@@ -364,8 +396,7 @@ async fn run_hook_command(kind: HookKind) {
 async fn main() {
     match parse_cli(env::args()) {
         Ok(Command::Serve { no_tray }) => {
-            let _ = no_tray;
-            if let Err(err) = run_serve().await {
+            if let Err(err) = run_serve(no_tray).await {
                 eprintln!("{err}");
                 std::process::exit(1);
             }
