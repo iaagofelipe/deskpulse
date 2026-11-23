@@ -1,6 +1,6 @@
 use chrono::{DateTime, Duration as ChronoDuration, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -10,10 +10,11 @@ use tokio::sync::watch;
 
 const ICS_POLL_INTERVAL: Duration = Duration::from_secs(300);
 const ICS_HTTP_TIMEOUT: Duration = Duration::from_secs(10);
+pub const AGENDA_WINDOW_DAYS: i64 = 7;
 
 static TMP_SEQ: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct AgendaEvent {
     #[serde(default)]
     pub id: String,
@@ -25,6 +26,12 @@ pub struct AgendaEvent {
     pub all_day: bool,
     #[serde(default)]
     pub source: String,
+    #[serde(default)]
+    pub location: Option<String>,
+    #[serde(default)]
+    pub day_key: String,
+    #[serde(default)]
+    pub is_today: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
@@ -164,7 +171,9 @@ impl AgendaStore {
 
         match fetch_result {
             Ok(body) => {
-                let parsed = parse_ics_for_date(&body, Local::now().date_naive());
+                let today = Local::now().date_naive();
+                let end_date = today + ChronoDuration::days(AGENDA_WINDOW_DAYS - 1);
+                let parsed = parse_ics_for_date_range(&body, today, end_date);
                 if let Ok(mut guard) = self.inner.lock() {
                     if guard.ics_url.as_deref() == Some(raw_url.as_str()) {
                         guard.ics_events = parsed;
@@ -187,20 +196,21 @@ impl AgendaStore {
 
     pub fn snapshot(&self) -> AgendaSnapshot {
         let today = Local::now().date_naive();
+        let window_end = today + ChronoDuration::days(AGENDA_WINDOW_DAYS - 1);
         let Ok(mut guard) = self.inner.lock() else {
             return AgendaSnapshot::default();
         };
 
         guard
             .pushed_events
-            .retain(|ev| is_event_on_or_after(ev, today));
+            .retain(|ev| is_event_in_window(ev, today, window_end));
         guard
             .ics_events
-            .retain(|ev| is_event_on_or_after(ev, today));
+            .retain(|ev| is_event_in_window(ev, today, window_end));
 
         let ics_configured = guard.ics_url.is_some();
         let configured = ics_configured || !guard.pushed_events.is_empty();
-        let events = merge_and_sort_events(&guard.pushed_events, &guard.ics_events);
+        let events = merge_and_sort_events(&guard.pushed_events, &guard.ics_events, today);
 
         AgendaSnapshot {
             configured,
@@ -213,7 +223,17 @@ impl AgendaStore {
 }
 
 /// Parses an iCalendar (`.ics`) payload and returns events occurring on `target_date`.
+#[allow(dead_code)]
 pub fn parse_ics_for_date(ics: &str, target_date: NaiveDate) -> Vec<AgendaEvent> {
+    parse_ics_for_date_range(ics, target_date, target_date)
+}
+
+/// Parses an iCalendar (`.ics`) payload and returns events occurring within `start_date ..= end_date`.
+pub fn parse_ics_for_date_range(
+    ics: &str,
+    start_date: NaiveDate,
+    end_date: NaiveDate,
+) -> Vec<AgendaEvent> {
     let lines = unfold_ics_lines(ics);
     let mut events = Vec::new();
     let mut current: Option<RawVEvent> = None;
@@ -249,7 +269,9 @@ pub fn parse_ics_for_date(ics: &str, target_date: NaiveDate) -> Vec<AgendaEvent>
                 sub_depth -= 1;
             } else if trimmed.eq_ignore_ascii_case("END:VEVENT") {
                 if let Some(raw_ev) = current.take() {
-                    if let Some(parsed) = raw_ev.into_agenda_event(target_date, events.len()) {
+                    if let Some(parsed) =
+                        raw_ev.into_agenda_event_in_range(start_date, end_date, events.len())
+                    {
                         events.push(parsed);
                     }
                 }
@@ -267,6 +289,11 @@ pub fn parse_ics_for_date(ics: &str, target_date: NaiveDate) -> Vec<AgendaEvent>
                     ev.uid = Some(value.trim().to_string());
                 } else if name.eq_ignore_ascii_case("SUMMARY") {
                     ev.summary = Some(unescape_ics_text(value).trim().to_string());
+                } else if name.eq_ignore_ascii_case("LOCATION") {
+                    let unescaped = unescape_ics_text(value).trim().to_string();
+                    if !unescaped.is_empty() {
+                        ev.location = Some(unescaped);
+                    }
                 } else if name.eq_ignore_ascii_case("STATUS") {
                     ev.cancelled = value.trim().eq_ignore_ascii_case("CANCELLED");
                 } else if name.eq_ignore_ascii_case("DTSTART") {
@@ -286,13 +313,19 @@ pub fn parse_ics_for_date(ics: &str, target_date: NaiveDate) -> Vec<AgendaEvent>
 struct RawVEvent {
     uid: Option<String>,
     summary: Option<String>,
+    location: Option<String>,
     dtstart: Option<IcsDateTime>,
     dtend: Option<IcsDateTime>,
     cancelled: bool,
 }
 
 impl RawVEvent {
-    fn into_agenda_event(self, target_date: NaiveDate, fallback_idx: usize) -> Option<AgendaEvent> {
+    fn into_agenda_event_in_range(
+        self,
+        start_date: NaiveDate,
+        end_date: NaiveDate,
+        fallback_idx: usize,
+    ) -> Option<AgendaEvent> {
         if self.cancelled {
             return None;
         }
@@ -303,24 +336,25 @@ impl RawVEvent {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "(Sem título)".to_string());
 
-        let (start_iso, end_iso, all_day) = match dtstart {
-            IcsDateTime::Date(start_date) => {
-                let end_date = match self.dtend {
+        let (start_iso, end_iso, all_day, day_key) = match dtstart {
+            IcsDateTime::Date(start_d) => {
+                let end_d = match self.dtend {
                     Some(IcsDateTime::Date(d)) => Some(d),
                     Some(IcsDateTime::LocalDateTime(dt)) => Some(dt.date_naive()),
                     None => None,
                 };
-                let matches = match end_date {
-                    Some(ed) if ed > start_date => target_date >= start_date && target_date < ed,
-                    _ => target_date == start_date,
+                let matches = match end_d {
+                    Some(ed) if ed > start_d => start_d <= end_date && ed > start_date,
+                    _ => start_d >= start_date && start_d <= end_date,
                 };
                 if !matches {
                     return None;
                 }
                 (
-                    target_date.format("%Y-%m-%d").to_string(),
-                    end_date.map(|d| d.format("%Y-%m-%d").to_string()),
+                    start_d.format("%Y-%m-%d").to_string(),
+                    end_d.map(|d| d.format("%Y-%m-%d").to_string()),
                     true,
+                    start_d.format("%Y-%m-%d").to_string(),
                 )
             }
             IcsDateTime::LocalDateTime(start_dt) => {
@@ -331,11 +365,14 @@ impl RawVEvent {
                 };
                 let matches = match end_dt {
                     Some(ed) if ed > start_dt => {
-                        let day_start = local_day_start(target_date)?;
-                        let day_end = local_day_start(target_date + ChronoDuration::days(1))?;
-                        start_dt < day_end && ed > day_start
+                        let window_start_dt = local_day_start(start_date)?;
+                        let window_end_dt = local_day_start(end_date + ChronoDuration::days(1))?;
+                        start_dt < window_end_dt && ed > window_start_dt
                     }
-                    _ => start_dt.date_naive() == target_date,
+                    _ => {
+                        let d = start_dt.date_naive();
+                        d >= start_date && d <= end_date
+                    }
                 };
                 if !matches {
                     return None;
@@ -344,6 +381,7 @@ impl RawVEvent {
                     start_dt.to_rfc3339(),
                     end_dt.map(|ed| ed.to_rfc3339()),
                     false,
+                    start_dt.date_naive().format("%Y-%m-%d").to_string(),
                 )
             }
         };
@@ -353,6 +391,9 @@ impl RawVEvent {
             .filter(|u| !u.is_empty())
             .unwrap_or_else(|| format!("ics-{fallback_idx}-{}", start_iso));
 
+        let today_key = Local::now().date_naive().format("%Y-%m-%d").to_string();
+        let is_today = day_key == today_key;
+
         Some(AgendaEvent {
             id,
             title,
@@ -360,6 +401,9 @@ impl RawVEvent {
             end_iso,
             all_day,
             source: "ics".to_string(),
+            location: self.location,
+            day_key,
+            is_today,
         })
     }
 }
@@ -516,7 +560,22 @@ fn to_http_fetch_url(url: &str) -> String {
     url.to_string()
 }
 
+fn compute_day_key(start_iso: &str) -> String {
+    if let Some(parsed) = parse_event_datetime_or_date(start_iso) {
+        match parsed {
+            IcsDateTime::Date(d) => d.format("%Y-%m-%d").to_string(),
+            IcsDateTime::LocalDateTime(dt) => dt.date_naive().format("%Y-%m-%d").to_string(),
+        }
+    } else if start_iso.len() >= 10 {
+        start_iso[..10].to_string()
+    } else {
+        String::new()
+    }
+}
+
 fn normalize_pushed_events(events: Vec<AgendaEvent>, today: NaiveDate) -> Vec<AgendaEvent> {
+    let window_end = today + ChronoDuration::days(AGENDA_WINDOW_DAYS - 1);
+    let today_key = today.format("%Y-%m-%d").to_string();
     let mut out = Vec::new();
     for (idx, mut ev) in events.into_iter().enumerate() {
         ev.title = ev.title.trim().to_string();
@@ -533,7 +592,14 @@ fn normalize_pushed_events(events: Vec<AgendaEvent>, today: NaiveDate) -> Vec<Ag
             ev.id = format!("push-{idx}-{}", ev.start_iso);
         }
         ev.source = "push".to_string();
-        if is_event_on_or_after(&ev, today) {
+        ev.location = ev
+            .location
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty());
+        ev.day_key = compute_day_key(&ev.start_iso);
+        ev.is_today = ev.day_key == today_key;
+
+        if is_event_in_window(&ev, today, window_end) {
             out.push(ev);
         }
     }
@@ -566,41 +632,70 @@ fn parse_event_datetime_or_date(raw: &str) -> Option<IcsDateTime> {
     None
 }
 
-fn is_event_on_or_after(ev: &AgendaEvent, today: NaiveDate) -> bool {
+fn is_event_in_window(ev: &AgendaEvent, window_start: NaiveDate, window_end: NaiveDate) -> bool {
     let Some(start) = parse_event_datetime_or_date(&ev.start_iso) else {
         return false;
     };
 
-    let start_is_current = match start {
-        IcsDateTime::Date(d) => d >= today,
-        IcsDateTime::LocalDateTime(dt) => dt.date_naive() >= today,
-    };
-    if start_is_current {
-        return true;
-    }
-
-    if let Some(end_raw) = ev.end_iso.as_deref() {
-        if let Some(end) = parse_event_datetime_or_date(end_raw) {
-            return match end {
-                IcsDateTime::Date(d) => d > today,
-                IcsDateTime::LocalDateTime(dt) => {
-                    local_day_start(today).is_some_and(|day_start| dt > day_start)
+    match start {
+        IcsDateTime::Date(d) => {
+            if let Some(end_raw) = ev.end_iso.as_deref() {
+                if let Some(end) = parse_event_datetime_or_date(end_raw) {
+                    let ed = match end {
+                        IcsDateTime::Date(ed) => ed,
+                        IcsDateTime::LocalDateTime(edt) => edt.date_naive(),
+                    };
+                    if ed > d {
+                        return d <= window_end && ed > window_start;
+                    }
                 }
-            };
+            }
+            d >= window_start && d <= window_end
+        }
+        IcsDateTime::LocalDateTime(dt) => {
+            if let Some(end_raw) = ev.end_iso.as_deref() {
+                if let Some(end) = parse_event_datetime_or_date(end_raw) {
+                    if let IcsDateTime::LocalDateTime(edt) = end {
+                        if edt > dt {
+                            if let (Some(w_start_dt), Some(w_end_dt)) = (
+                                local_day_start(window_start),
+                                local_day_start(window_end + ChronoDuration::days(1)),
+                            ) {
+                                return dt < w_end_dt && edt > w_start_dt;
+                            }
+                        }
+                    }
+                }
+            }
+            let d = dt.date_naive();
+            d >= window_start && d <= window_end
         }
     }
-
-    false
 }
 
-fn merge_and_sort_events(pushed: &[AgendaEvent], ics: &[AgendaEvent]) -> Vec<AgendaEvent> {
-    let mut seen: HashSet<(String, String)> = HashSet::new();
-    let mut merged = Vec::with_capacity(pushed.len() + ics.len());
+fn merge_and_sort_events(
+    pushed: &[AgendaEvent],
+    ics: &[AgendaEvent],
+    today: NaiveDate,
+) -> Vec<AgendaEvent> {
+    let mut seen: HashMap<(String, String), usize> = HashMap::new();
+    let mut merged: Vec<AgendaEvent> = Vec::with_capacity(pushed.len() + ics.len());
+    let today_key = today.format("%Y-%m-%d").to_string();
 
     for ev in pushed.iter().chain(ics.iter()) {
         let key = (normalize_title(&ev.title), normalize_start_key(&ev.start_iso));
-        if seen.insert(key) {
-            merged.push(ev.clone());
+        if let Some(&idx) = seen.get(&key) {
+            if merged[idx].location.is_none() && ev.location.is_some() {
+                merged[idx].location = ev.location.clone();
+            }
+        } else {
+            let mut event = ev.clone();
+            if event.day_key.is_empty() {
+                event.day_key = compute_day_key(&event.start_iso);
+            }
+            event.is_today = event.day_key == today_key;
+            seen.insert(key, merged.len());
+            merged.push(event);
         }
     }
 
@@ -826,6 +921,7 @@ mod tests {
                     end_iso: None,
                     all_day: false,
                     source: "push".to_string(),
+                    ..Default::default()
                 },
                 AgendaEvent {
                     id: "push-standup".to_string(),
@@ -834,6 +930,7 @@ mod tests {
                     end_iso: None,
                     all_day: false,
                     source: "gcalendar".to_string(),
+                    ..Default::default()
                 },
                 AgendaEvent {
                     id: "push-review".to_string(),
@@ -842,6 +939,7 @@ mod tests {
                     end_iso: None,
                     all_day: false,
                     source: "".to_string(),
+                    ..Default::default()
                 },
             ])
             .expect("replace_pushed should succeed");
@@ -908,6 +1006,7 @@ mod tests {
                 end_iso: None,
                 all_day: true,
                 source: "push".to_string(),
+                ..Default::default()
             },
             AgendaEvent {
                 id: "today-allday".to_string(),
@@ -916,6 +1015,7 @@ mod tests {
                 end_iso: None,
                 all_day: true,
                 source: "push".to_string(),
+                ..Default::default()
             },
         ])
         .unwrap();
@@ -1023,5 +1123,138 @@ mod tests {
         assert!(after_change.ics_configured);
         assert_eq!(after_change.last_sync_ms, None);
         assert_eq!(after_change.error, None);
+    }
+
+    #[test]
+    fn test_parse_ics_includes_next_7_days_location_and_excludes_day_8() {
+        let today = Local::now().date_naive();
+        let yesterday = today - ChronoDuration::days(1);
+        let day_plus_3 = today + ChronoDuration::days(3);
+        let day_plus_8 = today + ChronoDuration::days(8);
+
+        let ics = format!(
+            "BEGIN:VCALENDAR\r\n\
+             VERSION:2.0\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:evt-yesterday\r\n\
+             DTSTART:{}T100000Z\r\n\
+             SUMMARY:Yesterday Meeting\r\n\
+             END:VEVENT\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:evt-today\r\n\
+             DTSTART:{}T110000Z\r\n\
+             SUMMARY:Today Meeting\r\n\
+             LOCATION:Google Meet\r\n\
+             END:VEVENT\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:evt-plus3\r\n\
+             DTSTART:{}T140000Z\r\n\
+             SUMMARY:Future Meeting\r\n\
+             END:VEVENT\r\n\
+             BEGIN:VEVENT\r\n\
+             UID:evt-plus8\r\n\
+             DTSTART:{}T090000Z\r\n\
+             SUMMARY:Far Future Meeting\r\n\
+             END:VEVENT\r\n\
+             END:VCALENDAR\r\n",
+            yesterday.format("%Y%m%d"),
+            today.format("%Y%m%d"),
+            day_plus_3.format("%Y%m%d"),
+            day_plus_8.format("%Y%m%d"),
+        );
+
+        let events = parse_ics_for_date_range(
+            &ics,
+            today,
+            today + ChronoDuration::days(6),
+        );
+
+        assert_eq!(events.len(), 2, "expected only today and +3 days, got: {events:?}");
+
+        let ev_today = &events[0];
+        assert_eq!(ev_today.id, "evt-today");
+        assert_eq!(ev_today.title, "Today Meeting");
+        assert_eq!(ev_today.location.as_deref(), Some("Google Meet"));
+        assert_eq!(ev_today.day_key, today.format("%Y-%m-%d").to_string());
+        assert!(ev_today.is_today);
+
+        let ev_plus3 = &events[1];
+        assert_eq!(ev_plus3.id, "evt-plus3");
+        assert_eq!(ev_plus3.title, "Future Meeting");
+        assert_eq!(ev_plus3.day_key, day_plus_3.format("%Y-%m-%d").to_string());
+        assert!(!ev_plus3.is_today);
+    }
+
+    #[test]
+    fn test_push_events_auto_populates_day_key_and_is_today() {
+        let dir = TempDir::new().expect("tempdir");
+        let push_path = dir.path().join("agenda_push.json");
+        let store = AgendaStore::new(push_path, None);
+
+        let today = Local::now().date_naive();
+        let yesterday = today - ChronoDuration::days(1);
+        let day_plus_2 = today + ChronoDuration::days(2);
+        let day_plus_6 = today + ChronoDuration::days(6);
+        let day_plus_8 = today + ChronoDuration::days(8);
+
+        let json_payload = format!(
+            r#"[
+                {{
+                    "title": "Yesterday Event",
+                    "start_iso": "{}T09:00:00"
+                }},
+                {{
+                    "title": "Today Event",
+                    "start_iso": "{}T10:00:00"
+                }},
+                {{
+                    "title": "Midweek Event",
+                    "start_iso": "{}T14:00:00"
+                }},
+                {{
+                    "title": "Day 6 Window Boundary",
+                    "start_iso": "{}T16:00:00"
+                }},
+                {{
+                    "title": "Day 8 Beyond Window",
+                    "start_iso": "{}T11:00:00"
+                }}
+            ]"#,
+            yesterday.format("%Y-%m-%d"),
+            today.format("%Y-%m-%d"),
+            day_plus_2.format("%Y-%m-%d"),
+            day_plus_6.format("%Y-%m-%d"),
+            day_plus_8.format("%Y-%m-%d"),
+        );
+
+        let pushed: Vec<AgendaEvent> =
+            serde_json::from_str(&json_payload).expect("deserialize pushed payload");
+        store.replace_pushed(pushed).expect("replace_pushed");
+
+        let snap = store.snapshot();
+        assert_eq!(
+            snap.events.len(),
+            3,
+            "expected exactly 3 events (today, +2d, +6d), got: {:?}",
+            snap.events
+        );
+
+        let ev0 = &snap.events[0];
+        assert_eq!(ev0.title, "Today Event");
+        assert_eq!(ev0.day_key, today.format("%Y-%m-%d").to_string());
+        assert!(ev0.is_today);
+        assert_eq!(ev0.location, None);
+
+        let ev1 = &snap.events[1];
+        assert_eq!(ev1.title, "Midweek Event");
+        assert_eq!(ev1.day_key, day_plus_2.format("%Y-%m-%d").to_string());
+        assert!(!ev1.is_today);
+        assert_eq!(ev1.location, None);
+
+        let ev2 = &snap.events[2];
+        assert_eq!(ev2.title, "Day 6 Window Boundary");
+        assert_eq!(ev2.day_key, day_plus_6.format("%Y-%m-%d").to_string());
+        assert!(!ev2.is_today);
+        assert_eq!(ev2.location, None);
     }
 }
