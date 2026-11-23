@@ -1701,4 +1701,40 @@ mod tests {
         }
         0
     }
+
+    #[test]
+    fn test_all_9_view_modules_export_render_function() {
+        let view_names = [
+            "home",
+            "pc",
+            "ai",
+            "agenda",
+            "weather",
+            "media",
+            "github",
+            "shortcuts",
+            "timer",
+        ];
+
+        for name in view_names {
+            let path = format!("js/views/{name}.js");
+            let (mime, bytes) = crate::web_assets::serve_web_asset(&path)
+                .unwrap_or_else(|| panic!("embedded web asset missing: {path}"));
+            assert!(
+                mime.contains("javascript"),
+                "{path} should have javascript MIME type, got {mime}"
+            );
+            assert!(
+                bytes.len() > 200,
+                "{path} must be a complete view module (> 200 bytes), got {} bytes",
+                bytes.len()
+            );
+            let src = std::str::from_utf8(bytes)
+                .unwrap_or_else(|e| panic!("{path} is not valid UTF-8: {e}"));
+            assert!(
+                src.contains("export function render"),
+                "{path} must export function render"
+            );
+        }
+    }
 }
