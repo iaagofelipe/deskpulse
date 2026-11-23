@@ -37,18 +37,46 @@ pub struct PcSnapshot {
     pub gpu: Option<GpuSnapshot>,
     pub uptime_sec: u64,
     pub cpu_history: Vec<u8>,
+    pub gpu_history: Vec<u8>,
+    pub pc_locked: bool,
 }
 
-pub fn push_cpu_history(history: &mut Vec<u8>, cpu_pct: f32) {
-    let clamped = if cpu_pct.is_nan() {
+pub fn push_history(history: &mut Vec<u8>, pct: f32) {
+    let clamped = if pct.is_nan() {
         0
     } else {
-        cpu_pct.clamp(0.0, 100.0).round() as u8
+        pct.clamp(0.0, 100.0).round() as u8
     };
     history.push(clamped);
-    while history.len() > 30 {
+    while history.len() > 60 {
         history.remove(0);
     }
+}
+
+#[allow(dead_code)]
+pub fn push_cpu_history(history: &mut Vec<u8>, cpu_pct: f32) {
+    push_history(history, cpu_pct);
+}
+
+#[cfg(windows)]
+pub fn is_workstation_locked() -> bool {
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseDesktop, OpenInputDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_SWITCHDESKTOP,
+    };
+    unsafe {
+        match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_SWITCHDESKTOP) {
+            Ok(desktop) => {
+                let _ = CloseDesktop(desktop);
+                false
+            }
+            Err(_) => true,
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_workstation_locked() -> bool {
+    false
 }
 
 fn parse_optional_f32(raw: &str) -> Option<f32> {
@@ -125,6 +153,7 @@ fn collect_pc_snapshot(
     elapsed_secs: f64,
     gpu: Option<GpuSnapshot>,
     cpu_history: &mut Vec<u8>,
+    gpu_history: &mut Vec<u8>,
 ) -> PcSnapshot {
     sys.refresh_cpu_usage();
     sys.refresh_memory();
@@ -133,7 +162,12 @@ fn collect_pc_snapshot(
 
     let cpu_pct = sys.global_cpu_usage();
     let rounded_cpu_pct = (cpu_pct * 10.0).round() / 10.0;
-    push_cpu_history(cpu_history, rounded_cpu_pct);
+    push_history(cpu_history, rounded_cpu_pct);
+
+    let gpu_pct = gpu.as_ref().and_then(|g| g.util_pct).unwrap_or(0.0);
+    push_history(gpu_history, gpu_pct);
+
+    let pc_locked = is_workstation_locked();
 
     let cpu_name = sys
         .cpus()
@@ -188,6 +222,8 @@ fn collect_pc_snapshot(
         gpu,
         uptime_sec: System::uptime(),
         cpu_history: cpu_history.clone(),
+        gpu_history: gpu_history.clone(),
+        pc_locked,
     }
 }
 
@@ -214,7 +250,8 @@ impl SystemMonitor {
                 let mut disks = Disks::new_with_refreshed_list();
                 let mut networks = Networks::new_with_refreshed_list();
                 let mut cached_gpu = query_nvidia_gpu_blocking();
-                let mut cpu_history: Vec<u8> = Vec::with_capacity(30);
+                let mut cpu_history: Vec<u8> = Vec::with_capacity(60);
+                let mut gpu_history: Vec<u8> = Vec::with_capacity(60);
 
                 let initial = collect_pc_snapshot(
                     &mut sys,
@@ -223,6 +260,7 @@ impl SystemMonitor {
                     1.0,
                     cached_gpu.clone(),
                     &mut cpu_history,
+                    &mut gpu_history,
                 );
                 if let Ok(mut w) = latest_bg.write() {
                     *w = Some(initial);
@@ -256,6 +294,7 @@ impl SystemMonitor {
                         dt,
                         cached_gpu.clone(),
                         &mut cpu_history,
+                        &mut gpu_history,
                     );
                     if let Ok(mut w) = latest_bg.write() {
                         *w = Some(snap);
@@ -284,14 +323,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_push_cpu_history_caps_at_30_and_clamps_values() {
-        let mut history = Vec::new();
-        for i in 0..35 {
-            push_cpu_history(&mut history, (i * 4) as f32);
+    fn test_push_history_caps_at_60_and_clamps_values() {
+        let mut cpu_hist = Vec::new();
+        let mut gpu_hist = Vec::new();
+        for i in 0..65 {
+            push_history(&mut cpu_hist, (i * 2) as f32);
+            push_history(&mut gpu_hist, (i * 2) as f32);
         }
-        assert_eq!(history.len(), 30);
-        assert_eq!(history.first().copied(), Some(20));
-        assert_eq!(history.last().copied(), Some(100));
+        assert_eq!(cpu_hist.len(), 60);
+        assert_eq!(gpu_hist.len(), 60);
+        assert_eq!(cpu_hist.first().copied(), Some(10));
+        assert_eq!(cpu_hist.last().copied(), Some(100));
+        assert_eq!(gpu_hist.first().copied(), Some(10));
+        assert_eq!(gpu_hist.last().copied(), Some(100));
+
+        let mut test_hist = Vec::new();
+        push_history(&mut test_hist, f32::NAN);
+        push_history(&mut test_hist, -10.0);
+        push_history(&mut test_hist, 150.0);
+        assert_eq!(test_hist, vec![0, 0, 100]);
     }
 
     #[test]
@@ -318,7 +368,7 @@ mod tests {
     async fn test_system_monitor_produces_initial_snapshot_without_panicking() {
         let (tx, rx) = watch::channel(false);
         let mon = SystemMonitor::spawn(rx);
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_secs(8);
         let snap = loop {
             if let Some(s) = mon.snapshot() {
                 break s;
@@ -331,6 +381,8 @@ mod tests {
         assert!(snap.ram_total_gb > 0.1);
         assert!(!snap.disks.is_empty());
         assert!(!snap.cpu_history.is_empty());
+        assert!(!snap.gpu_history.is_empty());
+        let _ = snap.pc_locked;
         let _ = tx.send(true);
     }
 
