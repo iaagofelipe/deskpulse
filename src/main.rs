@@ -1,3 +1,4 @@
+// DeskPulse v2 Appliance
 mod agenda;
 mod approvals;
 mod config;

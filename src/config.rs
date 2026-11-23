@@ -45,6 +45,7 @@ pub struct GithubConfig {
 }
 
 impl GithubConfig {
+    #[allow(dead_code)]
     pub fn resolve_token(&self) -> Option<String> {
         if let Some(ref t) = self.token {
             let trimmed = t.trim();
@@ -361,9 +362,11 @@ pub fn save_config(path: &Path, cfg: &AppConfig) -> Result<(), String> {
     ))
 }
 
+#[allow(dead_code)]
 pub struct ConfigWatcher;
 
 impl ConfigWatcher {
+    #[allow(dead_code)]
     pub fn spawn(
         path: PathBuf,
         initial: AppConfig,
@@ -372,6 +375,7 @@ impl ConfigWatcher {
         Self::spawn_with_interval(path, initial, shutdown, Duration::from_secs(3))
     }
 
+    #[allow(dead_code)]
     pub fn spawn_with_interval(
         path: PathBuf,
         initial: AppConfig,
