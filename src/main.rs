@@ -7,6 +7,7 @@ mod hooks;
 mod monitors;
 mod security;
 mod server;
+mod shortcuts;
 mod todos;
 
 use std::env;
