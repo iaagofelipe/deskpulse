@@ -1,6 +1,1 @@
-.screensaver-overlay {
-    z-index: 40;
-}
-.approval-overlay {
-    z-index: 80;
-}
+﻿body { margin: 0; padding: 0; background: var(--bg-dark); color: var(--text-main); position: fixed; inset: 0; overflow: hidden; display: flex; } #navRail { width: 52px; background: var(--bg-panel); display: flex; flex-direction: column; align-items: center; padding: var(--spacing-sm) 0; gap: var(--spacing-sm); } .nav-btn { width: 40px; height: 40px; border-radius: 20px; } .views-stage { flex: 1; position: relative; } .view { position: absolute; inset: 0; display: none; padding: var(--spacing-md); box-sizing: border-box; overflow: hidden; } .view.active { display: block; } .hidden { display: none !important; } .screensaver-overlay { z-index: 40; position: absolute; inset: 0; background: #000; } .approval-overlay { z-index: 80; position: absolute; inset: 0; background: rgba(0,0,0,0.8); } .token-overlay { z-index: 90; position: absolute; inset: 0; background: #000; }

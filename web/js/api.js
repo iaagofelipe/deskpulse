@@ -1,12 +1,10 @@
-export function loadToken() {}
-export function saveToken(t) {}
-export function clearToken() {}
-export function apiRequest(path, method, body) {}
-export function startStream(cb) {}
+﻿export async function apiRequest(method, path, body) {}
+export function startStream(opts) {}
+export function escapeHtml(s) { return String(s); }
+export function formatBytes(b) { return b + 'B'; }
+export function formatCompactNumber(n) { return String(n); }
+export function formatDuration(s) { return s + 's'; }
 export function requestWakeLock() {}
 export function ensureAudioUnlocked() {}
-export function alertUser() {}
 export function playChime() {}
-export function formatBytes(b) {}
-export function formatCompactNumber(n) {}
-export function formatDuration(s) {}
+export function alertUser() {}

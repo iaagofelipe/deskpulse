@@ -1,69 +1,46 @@
-<!DOCTYPE html>
-<html lang="pt-BR">
+﻿<!DOCTYPE html>
+<html lang='pt-BR'>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>DeskPulse</title>
-    <link rel="stylesheet" href="/assets/css/tokens.css">
-    <link rel="stylesheet" href="/assets/css/layout.css">
-    <link rel="stylesheet" href="/assets/css/views.css">
+  <meta charset='utf-8'>
+  <meta name='viewport' content='width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no'>
+  <title>DeskPulse Appliance</title>
+  <link rel='stylesheet' href='/assets/css/tokens.css'>
+  <link rel='stylesheet' href='/assets/css/layout.css'>
+  <link rel='stylesheet' href='/assets/css/views.css'>
+  <link rel='manifest' href='/manifest.webmanifest'>
+  <link rel='icon' href='/icon.svg' type='image/svg+xml'>
+  <link rel='apple-touch-icon' href='/icon-192.png'>
 </head>
 <body>
-    <div id="navRail">
-        <div class="nav-top">
-            <button class="nav-btn active" data-tab="home" id="tab-home"></button>
-            <button class="nav-btn" data-tab="pc" id="tab-pc"></button>
-            <button class="nav-btn" data-tab="ai" id="tab-ai"></button>
-            <button class="nav-btn" data-tab="agenda" id="tab-agenda"></button>
-            <button class="nav-btn" data-tab="weather" id="tab-weather"></button>
-            <button class="nav-btn" data-tab="media" id="tab-media"></button>
-            <button class="nav-btn" data-tab="github" id="tab-github"></button>
-            <button class="nav-btn" data-tab="shortcuts" id="tab-shortcuts"></button>
-            <button class="nav-btn" data-tab="timer" id="tab-timer"></button>
-        </div>
-        <div class="nav-bottom">
-            <button class="nav-btn" id="fullscreenBtn"></button>
-            <div id="connectionStatus" class="status-dot green"></div>
-        </div>
-    </div>
-
-    <div id="viewsStage">
-        <section id="view-home" class="view active"></section>
-        <section id="view-pc" class="view"></section>
-        <section id="view-ai" class="view"></section>
-        <section id="view-agenda" class="view"></section>
-        <section id="view-weather" class="view"></section>
-        <section id="view-media" class="view"></section>
-        <section id="view-github" class="view"></section>
-        <section id="view-shortcuts" class="view"></section>
-        <section id="view-timer" class="view"></section>
-    </div>
-
-    <div id="screensaverOverlay" class="screensaver-overlay hidden">
-        <div class="screensaver-clock"></div>
-    </div>
-
-    <div id="approvalOverlay" class="approval-overlay hidden">
-        <div class="approval-card">
-            <h3 class="approval-title"></h3>
-            <p class="approval-message"></p>
-            <div class="approval-actions">
-                <button class="btn-deny">Negar</button>
-                <button class="btn-pc">Responder no PC</button>
-                <button class="btn-allow">Permitir</button>
-            </div>
-            <div class="approval-progress"></div>
-        </div>
-    </div>
-
-    <div id="tokenOverlay" class="token-overlay hidden">
-        <div class="token-card">
-            <h3>Autenticação Necessária</h3>
-            <input type="password" id="tokenInput" placeholder="DeskPulse Token">
-            <button id="tokenSubmit">Salvar</button>
-        </div>
-    </div>
-
-    <script type="module" src="/assets/js/app.js"></script>
+  <div id='navRail'>
+    <button id='btn-home' class='nav-btn' data-tab='home'></button>
+    <button id='btn-pc' class='nav-btn' data-tab='pc'></button>
+    <button id='btn-ai' class='nav-btn' data-tab='ai'><span id='aiNavBadge'></span></button>
+    <button id='btn-agenda' class='nav-btn' data-tab='agenda'></button>
+    <button id='btn-weather' class='nav-btn' data-tab='weather'></button>
+    <button id='btn-media' class='nav-btn' data-tab='media'></button>
+    <button id='btn-github' class='nav-btn' data-tab='github'></button>
+    <button id='btn-shortcuts' class='nav-btn' data-tab='shortcuts'></button>
+    <button id='btn-timer' class='nav-btn' data-tab='timer'><span id='timerNavBadge'></span></button>
+    <div class='spacer' style='flex:1'></div>
+    <div id='connStatusIcon'></div>
+    <div id='usbStatusIcon'></div>
+    <button id='fullscreenBtn' class='nav-btn'></button>
+  </div>
+  <div id='viewsStage' class='views-stage'>
+    <div id='view-home' class='view active'></div>
+    <div id='view-pc' class='view'></div>
+    <div id='view-ai' class='view'></div>
+    <div id='view-agenda' class='view'></div>
+    <div id='view-weather' class='view'></div>
+    <div id='view-media' class='view'></div>
+    <div id='view-github' class='view'></div>
+    <div id='view-shortcuts' class='view'></div>
+    <div id='view-timer' class='view'></div>
+  </div>
+  <div id='screensaverOverlay' class='screensaver-overlay hidden'></div>
+  <div id='approvalOverlay' class='approval-overlay hidden'></div>
+  <div id='tokenOverlay' class='token-overlay hidden'></div>
+  <script type='module' src='/assets/js/app.js'></script>
 </body>
 </html>
