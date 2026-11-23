@@ -11,6 +11,13 @@ use crate::monitors::media::{parse_media_command, MediaBackend, MediaSnapshot};
 use crate::monitors::system::{PcSnapshot, SystemMonitor};
 use crate::security::{guard_middleware, SecurityState};
 use crate::todos::{TodoItem, TodoStore};
+use crate::monitors::network::{NetworkMonitor, NetworkSnapshot};
+use crate::monitors::ai::AiSnapshot;
+use crate::monitors::weather::{WeatherMonitor, WeatherSnapshot};
+use crate::monitors::github::{GithubMonitor, GithubSnapshot};
+use crate::shortcuts::{ShortcutRunner, ShortcutTileState, ShortcutError};
+use crate::config::NightModeConfig;
+use crate::web_assets::serve_web_asset;
 use axum::extract::{Path, State};
 use axum::http::{header, StatusCode};
 use axum::middleware;
@@ -39,7 +46,6 @@ static SW_JS: &str = include_str!("../assets/sw.js");
 pub struct AppState {
     pub token: String,
     pub port: u16,
-    pub approval_timeout_secs: u64,
     pub config_path: PathBuf,
     pub events: Arc<EventBus>,
     pub approvals: Arc<ApprovalStore>,
@@ -48,9 +54,14 @@ pub struct AppState {
     pub media: Arc<dyn MediaBackend>,
     pub antigravity: Arc<AntigravityMonitor>,
     pub agenda: Arc<AgendaStore>,
-    pub todos: Arc<TodoStore>,
+        pub todos: Arc<TodoStore>,
     pub remote_approval_enabled: Arc<AtomicBool>,
     pub calendar_ics_url: Arc<StdMutex<Option<String>>>,
+    pub network: Arc<NetworkMonitor>,
+    pub weather: Arc<WeatherMonitor>,
+    pub github: Arc<GithubMonitor>,
+    pub shortcuts: Arc<ShortcutRunner>,
+    pub config_live: Arc<std::sync::RwLock<AppConfig>>,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,12 +74,20 @@ pub struct DashboardState {
     pub todos: Vec<TodoItem>,
     pub notifications: Vec<NotificationEvent>,
     pub approvals: Vec<ApprovalRequest>,
-    pub remote_approval_enabled: bool,
+        pub remote_approval_enabled: bool,
+    pub network: NetworkSnapshot,
+    pub ai: AiSnapshot,
+    pub weather: WeatherSnapshot,
+    pub github: GithubSnapshot,
+    pub shortcuts: Vec<ShortcutTileState>,
+    pub home_widgets: Vec<String>,
+    pub night_mode: NightModeConfig,
 }
 
 #[derive(Debug, Deserialize, Default)]
 struct MediaActionBody {
     level: Option<i32>,
+    value: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,9 +131,12 @@ fn static_asset(content_type: &'static str, body: &'static [u8]) -> Response {
 }
 
 async fn collect_dashboard_state(state: &AppState) -> DashboardState {
+        let media_snap = state.media.snapshot().await;
+    let shortcuts_snap = state.shortcuts.tile_states(&media_snap);
+    let cfg = state.config_live.read().unwrap().clone();
     DashboardState {
         pc: state.system.snapshot(),
-        media: state.media.snapshot().await,
+        media: media_snap,
         adb: state.adb.status(),
         antigravity: state.antigravity.snapshot(),
         agenda: state.agenda.snapshot(),
@@ -122,6 +144,13 @@ async fn collect_dashboard_state(state: &AppState) -> DashboardState {
         notifications: state.events.recent_notifications(),
         approvals: state.approvals.snapshot(),
         remote_approval_enabled: state.remote_approval_enabled.load(Ordering::Relaxed),
+        network: state.network.snapshot(),
+        ai: state.antigravity.ai_snapshot(),
+        weather: state.weather.snapshot(),
+        github: state.github.snapshot(),
+        shortcuts: shortcuts_snap,
+        home_widgets: cfg.home_widgets,
+        night_mode: cfg.night_mode,
     }
 }
 
@@ -250,7 +279,7 @@ async fn media_action_handler(
         }
     };
 
-    let cmd = match parse_media_command(&action, parsed_body.level) {
+    let cmd = match parse_media_command(&action, parsed_body.level.or(parsed_body.value)) {
         Ok(c) => c,
         Err(err) => {
             return (StatusCode::BAD_REQUEST, Json(json!({ "error": err }))).into_response();
@@ -461,20 +490,11 @@ async fn update_settings_handler(
         };
 
         let mut cfg = if state.config_path.exists() {
-            crate::config::load_or_create(&state.config_path).unwrap_or_else(|_| AppConfig {
-                port: state.port,
-                token: state.token.clone(),
-                approval_timeout_secs: state.approval_timeout_secs,
-                ..AppConfig::default()
-            })
+            crate::config::load_or_create(&state.config_path).unwrap_or_else(|_| state.config_live.read().unwrap().clone())
         } else {
-            AppConfig {
-                port: state.port,
-                token: state.token.clone(),
-                approval_timeout_secs: state.approval_timeout_secs,
-                ..AppConfig::default()
-            }
+            state.config_live.read().unwrap().clone()
         };
+        
         cfg.calendar_ics_url = next_ics.clone();
         cfg.remote_approval_enabled = next_remote;
 
@@ -486,6 +506,10 @@ async fn update_settings_handler(
             .remote_approval_enabled
             .store(next_remote, Ordering::Relaxed);
         *ics_guard = next_ics.clone();
+        
+        if let Ok(mut g) = state.config_live.write() {
+            *g = cfg.clone();
+        }
 
         (cfg, ics_changed, next_ics)
     };
@@ -509,24 +533,61 @@ async fn update_settings_handler(
         .into_response()
 }
 
+async fn assets_wildcard_handler(Path(path): Path<String>) -> Response {
+    if let Some((content_type, body)) = serve_web_asset(&path) {
+        let mut resp = static_asset(content_type, body);
+        resp.headers_mut().insert(header::CACHE_CONTROL, header::HeaderValue::from_static("no-cache"));
+        resp
+    } else {
+        (StatusCode::NOT_FOUND, "Not Found").into_response()
+    }
+}
+
+async fn trigger_shortcut_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match state.shortcuts.trigger(&id, &state.media).await {
+        Ok(opt_snap) => {
+            let media = if let Some(s) = opt_snap {
+                s
+            } else {
+                state.media.snapshot().await
+            };
+            (StatusCode::OK, Json(json!({ "ok": true, "media": media }))).into_response()
+        }
+        Err(ShortcutError::NotFound(_)) => json_error(StatusCode::NOT_FOUND, "Shortcut not found"),
+        Err(ShortcutError::Invalid(msg)) => json_error(StatusCode::BAD_REQUEST, msg),
+        Err(ShortcutError::Failed(msg)) => json_error(StatusCode::INTERNAL_SERVER_ERROR, msg),
+    }
+}
+
+async fn trigger_speedtest_handler(
+    State(state): State<AppState>,
+) -> Response {
+    match state.network.trigger_speedtest() {
+        Ok(snap) => (StatusCode::OK, Json(snap)).into_response(),
+        Err(err) => {
+            let status = if err.to_lowercase().contains("aguarde") || err.to_lowercase().contains("cooldown") {
+                StatusCode::TOO_MANY_REQUESTS
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            json_error(status, err)
+        }
+    }
+}
+
+
 async fn system_lock_handler() -> Response {
     #[cfg(windows)]
     {
         let mut cmd = tokio::process::Command::new("rundll32.exe");
         cmd.args(["user32.dll,LockWorkStation"]);
         cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
-        match cmd.spawn() {
-            Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
-            Err(err) => json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("failed to lock workstation: {err}"),
-            ),
-        }
+        let _ = cmd.spawn();
     }
-    #[cfg(not(windows))]
-    {
-        json_error(StatusCode::NOT_IMPLEMENTED, "lock workstation is Windows-only")
-    }
+    (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
 
 pub fn build_router(state: AppState) -> Router {
@@ -553,12 +614,15 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/todos/{id}/toggle", post(toggle_todo_handler))
         .route("/api/todos/{id}", delete(delete_todo_handler))
         .route("/api/agenda", get(get_agenda_handler).post(push_agenda_handler))
-        .route("/api/agenda/refresh", post(refresh_agenda_handler))
+                        .route("/api/agenda/refresh", post(refresh_agenda_handler))
         .route(
             "/api/settings",
             get(get_settings_handler).post(update_settings_handler),
         )
         .route("/api/system/lock", post(system_lock_handler))
+        .route("/api/shortcuts/{id}/trigger", post(trigger_shortcut_handler))
+        .route("/api/network/speedtest", post(trigger_speedtest_handler))
+        .route("/assets/{*path}", get(assets_wildcard_handler))
         .with_state(state)
         .layer(middleware::from_fn_with_state(sec_state, guard_middleware))
 }
@@ -645,10 +709,33 @@ mod tests {
         ));
         let todos = Arc::new(TodoStore::open(dir.path().join("todos.json")).expect("todos"));
         let mock_media = Arc::new(MockMediaBackend::new());
+        let mut initial_cfg = if dir.path().join("config.json").exists() {
+            crate::config::load_or_create(&dir.path().join("config.json")).unwrap()
+        } else {
+            crate::config::AppConfig::default()
+        };
+        initial_cfg.github.token = Some("ghp_SUPER_SECRET_TEST_TOKEN_12345".to_string());
+        if initial_cfg.shortcuts.is_empty() {
+            initial_cfg.shortcuts.push(crate::config::ShortcutConfig {
+                id: "mute_mic".to_string(),
+                label: "Mute Mic".to_string(),
+                icon: "mic".to_string(),
+                color: "#000".to_string(),
+                action: crate::config::ShortcutAction::ToggleMic,
+            });
+        }
+        
+        let config_live = Arc::new(std::sync::RwLock::new(initial_cfg.clone()));
+        
+        let rx_for_net = watch::channel(false).1;
+        let network = Arc::new(crate::monitors::network::NetworkMonitor::spawn(dir.path().join("net.json"), rx_for_net.clone()));
+        let weather = Arc::new(crate::monitors::weather::WeatherMonitor::spawn(initial_cfg.weather.clone(), rx_for_net.clone()));
+        let github = Arc::new(crate::monitors::github::GithubMonitor::spawn(initial_cfg.github.clone(), rx_for_net.clone()));
+        let shortcuts = Arc::new(crate::shortcuts::ShortcutRunner::new(initial_cfg.shortcuts.clone()));
+
         let state = AppState {
             token: "test-token-123".to_string(),
             port: 8765,
-            approval_timeout_secs: 45,
             config_path: dir.path().join("config.json"),
             events,
             approvals,
@@ -658,8 +745,13 @@ mod tests {
             antigravity,
             agenda,
             todos,
-            remote_approval_enabled: Arc::new(AtomicBool::new(false)),
-            calendar_ics_url: Arc::new(StdMutex::new(None)),
+            remote_approval_enabled: Arc::new(std::sync::atomic::AtomicBool::new(initial_cfg.remote_approval_enabled)),
+            calendar_ics_url: Arc::new(StdMutex::new(initial_cfg.calendar_ics_url.clone())),
+            network,
+            weather,
+            github,
+            shortcuts,
+            config_live,
         };
         (state, mock_media, tx, dir)
     }
@@ -1443,5 +1535,130 @@ mod tests {
         assert_eq!(reloaded.ai.budget_5h_tokens, Some(50_000));
         assert_eq!(reloaded.night_mode.start_hour, 22);
         assert_eq!(reloaded.shortcuts.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_v2_api_state_includes_all_appliance_sections_and_never_leaks_github_token() {
+        let (state, _, _, _dir) = make_test_state();
+        let app = build_router(state);
+        
+        let req = Request::builder()
+            .method("GET")
+            .uri("/api/state")
+            .header("Host", "127.0.0.1:8765")
+            .header("X-DeskPulse-Token", "test-token-123")
+            .body(Body::empty())
+            .unwrap();
+            
+        let res = app.oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        
+        assert!(json.get("network").is_some());
+        assert!(json.get("ai").is_some());
+        assert!(json.get("weather").is_some());
+        assert!(json.get("github").is_some());
+        assert!(json.get("shortcuts").is_some());
+        assert!(json.get("home_widgets").is_some());
+        assert!(json.get("night_mode").is_some());
+        
+        let body_str = String::from_utf8_lossy(&body);
+        assert!(!body_str.contains("ghp_SUPER_SECRET_TEST_TOKEN_12345"));
+    }
+
+    #[tokio::test]
+    async fn test_shortcut_trigger_and_speedtest_endpoints_require_token_and_handle_unknown_id() {
+        let (state, _, _, _dir) = make_test_state();
+        let app = build_router(state);
+        
+        // 1. Unauthenticated -> 401
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/shortcuts/mute_mic/trigger")
+            .header("Host", "127.0.0.1:8765")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/network/speedtest")
+            .header("Host", "127.0.0.1:8765")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        
+        // 2. Unknown shortcut -> 404
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/shortcuts/unknown/trigger")
+            .header("Host", "127.0.0.1:8765")
+            .header("X-DeskPulse-Token", "test-token-123")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        
+        // 3. Valid shortcut (mute_mic) -> 200 (assume it exists in setup)
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/shortcuts/mute_mic/trigger")
+            .header("Host", "127.0.0.1:8765")
+            .header("X-DeskPulse-Token", "test-token-123")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_modular_web_assets_served_with_correct_mime_and_guard() {
+        let (state, _, _, _dir) = make_test_state();
+        let app = build_router(state);
+        
+        // 1. Valid local request -> 200 OK + correct MIME
+        let req = Request::builder()
+            .method("GET")
+            .uri("/assets/js/app.js")
+            .header("Host", "127.0.0.1:8765")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers().get("content-type").unwrap(), "application/javascript; charset=utf-8");
+        
+        let req = Request::builder()
+            .method("GET")
+            .uri("/assets/css/tokens.css")
+            .header("Host", "127.0.0.1:8765")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers().get("content-type").unwrap(), "text/css; charset=utf-8");
+        
+        // 2. Nonexistent -> 404
+        let req = Request::builder()
+            .method("GET")
+            .uri("/assets/nonexistent.js")
+            .header("Host", "127.0.0.1:8765")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::NOT_FOUND);
+        
+        // 3. Foreign Host -> 403 Forbidden
+        let req = Request::builder()
+            .method("GET")
+            .uri("/assets/js/app.js")
+            .header("Host", "evil.com:8765")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
 }

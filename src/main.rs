@@ -9,6 +9,7 @@ mod security;
 mod server;
 mod shortcuts;
 mod todos;
+mod web_assets;
 
 use std::env;
 use std::io::Read;
@@ -131,9 +132,9 @@ where
 
 async fn run_serve() -> Result<(), String> {
     let cfg_path = config::default_config_path();
-    let cfg = config::load_or_create(&cfg_path)?;
+    let initial_cfg = config::load_or_create(&cfg_path)?;
 
-    let addr: SocketAddr = ([127, 0, 0, 1], cfg.port).into();
+    let addr: SocketAddr = ([127, 0, 0, 1], initial_cfg.port).into();
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .map_err(|e| format!("failed to bind {addr}: {e}"))?;
@@ -143,23 +144,75 @@ async fn run_serve() -> Result<(), String> {
     let events = Arc::new(EventBus::new());
     let approvals = Arc::new(ApprovalStore::new(
         Arc::clone(&events),
-        Duration::from_secs(cfg.approval_timeout_secs),
+        Duration::from_secs(initial_cfg.approval_timeout_secs),
     ));
     let system = Arc::new(SystemMonitor::spawn(shutdown_rx.clone()));
-    let adb = Arc::new(AdbBridge::spawn(cfg.port, shutdown_rx.clone()));
+    let adb = Arc::new(AdbBridge::spawn(initial_cfg.port, shutdown_rx.clone()));
     let antigravity = Arc::new(AntigravityMonitor::spawn(shutdown_rx.clone()));
     let agenda = Arc::new(AgendaStore::new(
         data_dir.join("agenda_push.json"),
-        cfg.calendar_ics_url.clone(),
+        initial_cfg.calendar_ics_url.clone(),
     ));
-    agenda.spawn_poller(shutdown_rx);
+    agenda.spawn_poller(shutdown_rx.clone());
     let todos = Arc::new(TodoStore::open(data_dir.join("todos.json"))?);
     let media = Arc::new(WindowsMediaBackend::new());
 
+    let (config_live, mut cfg_watcher) = config::ConfigWatcher::spawn(
+        cfg_path.clone(),
+        initial_cfg.clone(),
+        shutdown_rx.clone(),
+    );
+
+    antigravity.update_budgets(
+        initial_cfg.ai.budget_5h_tokens,
+        initial_cfg.ai.budget_weekly_tokens,
+    );
+
+    let network = Arc::new(crate::monitors::network::NetworkMonitor::spawn(data_dir.join("network_usage.json"), shutdown_rx.clone()));
+    let weather = Arc::new(crate::monitors::weather::WeatherMonitor::spawn(
+        initial_cfg.weather.clone(),
+        shutdown_rx.clone(),
+    ));
+    let github = Arc::new(crate::monitors::github::GithubMonitor::spawn(
+        initial_cfg.github.clone(),
+        shutdown_rx.clone(),
+    ));
+    let shortcuts = Arc::new(crate::shortcuts::ShortcutRunner::new(initial_cfg.shortcuts.clone()));
+    let remote_approval_enabled = Arc::new(AtomicBool::new(initial_cfg.remote_approval_enabled));
+    
+    // Background watcher
+    let mut shutdown_rx_bg = shutdown_rx.clone();
+    let weather_clone = Arc::clone(&weather);
+    let github_clone = Arc::clone(&github);
+    let shortcuts_clone = Arc::clone(&shortcuts);
+    let antigravity_clone = Arc::clone(&antigravity);
+    let agenda_clone = Arc::clone(&agenda);
+    let remote_approval_enabled_clone = Arc::clone(&remote_approval_enabled);
+    
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown_rx_bg.changed() => break,
+                res = cfg_watcher.changed() => {
+                    if let Ok(_) = res {
+                        let new_cfg = cfg_watcher.borrow_and_update().clone();
+                        weather_clone.update_config(new_cfg.weather.clone());
+                        github_clone.update_config(new_cfg.github.clone());
+                        shortcuts_clone.update_config(new_cfg.shortcuts.clone());
+                        antigravity_clone.update_budgets(new_cfg.ai.budget_5h_tokens, new_cfg.ai.budget_weekly_tokens);
+                        agenda_clone.set_ics_url(new_cfg.calendar_ics_url.clone());
+                        remote_approval_enabled_clone.store(new_cfg.remote_approval_enabled, std::sync::atomic::Ordering::Relaxed);
+                    } else {
+                        break;
+                    }
+                }
+            }
+        }
+    });
+
     let app = build_router(AppState {
-        token: cfg.token.clone(),
-        port: cfg.port,
-        approval_timeout_secs: cfg.approval_timeout_secs,
+        token: initial_cfg.token.clone(),
+        port: initial_cfg.port,
         config_path: cfg_path.clone(),
         events,
         approvals,
@@ -169,18 +222,23 @@ async fn run_serve() -> Result<(), String> {
         antigravity,
         agenda,
         todos,
-        remote_approval_enabled: Arc::new(AtomicBool::new(cfg.remote_approval_enabled)),
-        calendar_ics_url: Arc::new(Mutex::new(cfg.calendar_ics_url.clone())),
+        remote_approval_enabled,
+        calendar_ics_url: Arc::new(Mutex::new(initial_cfg.calendar_ics_url.clone())),
+        network,
+        weather,
+        github,
+        shortcuts,
+        config_live,
     });
 
     println!(
         "DeskPulse rodando em http://127.0.0.1:{}/#token={}",
-        cfg.port, cfg.token
+        initial_cfg.port, initial_cfg.token
     );
     println!("Config: {}", cfg_path.display());
     println!(
         "Plugue o celular Android via USB (Depuracao USB ativa) e abra http://127.0.0.1:{}/#token={}",
-        cfg.port, cfg.token
+        initial_cfg.port, initial_cfg.token
     );
 
     let result = axum::serve(listener, app)

@@ -71,7 +71,6 @@ pub struct WeatherMonitor {
 }
 
 impl WeatherMonitor {
-    #[allow(dead_code)]
     pub fn spawn(initial: WeatherConfig, shutdown: watch::Receiver<bool>) -> Self {
         let is_configured = !initial.city.trim().is_empty()
             || initial.latitude.is_some()
@@ -281,7 +280,6 @@ impl WeatherMonitor {
         self.snapshot.read().unwrap().clone()
     }
 
-    #[allow(dead_code)]
     pub fn update_config(&self, cfg: WeatherConfig) {
         let changed = {
             let mut cur = self.config.write().unwrap();

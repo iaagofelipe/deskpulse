@@ -366,7 +366,6 @@ pub fn save_config(path: &Path, cfg: &AppConfig) -> Result<(), String> {
 pub struct ConfigWatcher;
 
 impl ConfigWatcher {
-    #[allow(dead_code)]
     pub fn spawn(
         path: PathBuf,
         initial: AppConfig,
@@ -375,7 +374,6 @@ impl ConfigWatcher {
         Self::spawn_with_interval(path, initial, shutdown, Duration::from_secs(3))
     }
 
-    #[allow(dead_code)]
     pub fn spawn_with_interval(
         path: PathBuf,
         initial: AppConfig,

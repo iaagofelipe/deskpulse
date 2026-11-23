@@ -16,7 +16,6 @@ pub struct ShortcutTileState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum ShortcutError {
     NotFound(String),
     Invalid(String),
@@ -35,7 +34,6 @@ impl std::fmt::Display for ShortcutError {
 
 impl std::error::Error for ShortcutError {}
 
-#[allow(dead_code)]
 pub fn parse_hotkey_vks(combo: &str) -> Result<Vec<u16>, String> {
     let trimmed = combo.trim();
     if trimmed.is_empty() {
@@ -283,7 +281,6 @@ pub struct ShortcutRunner {
 }
 
 impl ShortcutRunner {
-    #[allow(dead_code)]
     pub fn new(mut initial: Vec<ShortcutConfig>) -> Self {
         initial.truncate(MAX_SHORTCUT_TILES);
         Self {
@@ -291,7 +288,6 @@ impl ShortcutRunner {
         }
     }
 
-    #[allow(dead_code)]
     pub fn update_config(&self, mut tiles: Vec<ShortcutConfig>) {
         tiles.truncate(MAX_SHORTCUT_TILES);
         if let Ok(mut g) = self.tiles.write() {
@@ -299,7 +295,6 @@ impl ShortcutRunner {
         }
     }
 
-    #[allow(dead_code)]
     pub fn tile_states(&self, media: &MediaSnapshot) -> Vec<ShortcutTileState> {
         let tiles = self.tiles.read().unwrap_or_else(|e| e.into_inner());
         tiles
@@ -321,7 +316,6 @@ impl ShortcutRunner {
             .collect()
     }
 
-    #[allow(dead_code)]
     pub async fn trigger(
         &self,
         id: &str,
