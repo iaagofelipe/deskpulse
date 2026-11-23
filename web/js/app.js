@@ -375,6 +375,26 @@ function stopApprovalTicker() {
   }
 }
 
+function resolveApprovalTiming(req, now) {
+  const created = Number(req?.created_at_ms);
+  const startMs = Number.isFinite(created) && created > 0 ? created : now;
+  const rawExpires = Number(req?.expires_at_ms);
+  const rawTimeout = Number(req?.timeout_secs);
+  let expiresMs;
+  if (Number.isFinite(rawExpires) && rawExpires > 0) {
+    expiresMs = rawExpires;
+  } else if (Number.isFinite(rawTimeout) && rawTimeout > 0) {
+    expiresMs = startMs + rawTimeout * 1000;
+  } else {
+    expiresMs = startMs + 45_000;
+  }
+  const totalMs = Math.max(1000, expiresMs - startMs);
+  const remMs = Math.max(0, expiresMs - now);
+  const pct = Math.max(0, Math.min(100, (remMs / totalMs) * 100));
+  const remSec = Math.ceil(remMs / 1000);
+  return { startMs, expiresMs, totalMs, remMs, pct, remSec };
+}
+
 function updateApprovalCountdown() {
   const approvals = Array.isArray(state?.approvals) ? state.approvals : [];
   if (!approvals.length) {
@@ -384,12 +404,7 @@ function updateApprovalCountdown() {
 
   const req = approvals[0];
   const now = Date.now();
-  const created = Number(req.created_at_ms) || now;
-  const expires = Number(req.expires_at_ms) || created + 45_000;
-  const totalMs = Math.max(1000, expires - created);
-  const remMs = Math.max(0, expires - now);
-  const pct = Math.max(0, Math.min(100, (remMs / totalMs) * 100));
-  const remSec = Math.ceil(remMs / 1000);
+  const { expiresMs, pct, remSec } = resolveApprovalTiming(req, now);
 
   const fillEl = dom.approvalMount?.querySelector('.approval-countdown-fill');
   if (fillEl) {
@@ -401,7 +416,7 @@ function updateApprovalCountdown() {
   }
 
   // Local fallback cleanup if approval expired well past server timeout
-  if (now > expires + 2000) {
+  if (now > expiresMs + 2000) {
     state.approvals = approvals.filter((a) => a.id !== req.id);
     renderedApprovalKey = null;
     updateAiNavBadge();
@@ -458,17 +473,15 @@ function renderApprovalOverlay() {
 
   const req = approvals[0];
   const key = `${req.id}|${approvals.length}`;
+  if (dom.screensaverOverlay) {
+    dom.screensaverOverlay.classList.add('hidden');
+  }
   dom.approvalOverlay.classList.remove('hidden');
 
   if (renderedApprovalKey !== key) {
     renderedApprovalKey = key;
     const now = Date.now();
-    const created = Number(req.created_at_ms) || now;
-    const expires = Number(req.expires_at_ms) || created + 45_000;
-    const totalMs = Math.max(1000, expires - created);
-    const remMs = Math.max(0, expires - now);
-    const pct = Math.max(0, Math.min(100, (remMs / totalMs) * 100));
-    const remSec = Math.ceil(remMs / 1000);
+    const { pct, remSec } = resolveApprovalTiming(req, now);
 
     const queueBadge = approvals.length > 1
       ? `<span class="badge badge-ai num">1 de ${approvals.length}</span>`

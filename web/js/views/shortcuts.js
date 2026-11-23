@@ -9,7 +9,7 @@ const firingTimers = new Map();
 
 function safeTileColor(raw) {
   const s = String(raw || '').trim();
-  if (/^(#[0-9a-fA-F]{3,8}|var\(--[a-zA-Z0-9_-]+\)|rgba?\([0-9.,\s%]+\)|hsla?\([0-9.,\s%deg]+\))$/.test(s)) {
+  if (/^#[0-9a-fA-F]{3,8}$/.test(s) || /^var\(--[a-z0-9-]+\)$/i.test(s)) {
     return s;
   }
   return 'var(--accent)';

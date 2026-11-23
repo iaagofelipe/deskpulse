@@ -202,7 +202,8 @@ function applyMediaState(media, ctx) {
   const artist = media?.artist || (media?.app ? media.app : 'Inicie Spotify, YouTube ou player no PC');
   const album = media?.album || '';
   const app = media?.app || (playing ? 'Reproduzindo' : 'Sem mídia ativa');
-  const art = media?.artwork_data_url || '';
+  const rawArt = media?.artwork_data_url;
+  const art = typeof rawArt === 'string' && rawArt.startsWith('data:image/') ? rawArt : '';
   const artKey = art ? `${art.length}:${art.slice(-24)}` : '';
 
   refs.artBox.classList.toggle('is-playing', playing);

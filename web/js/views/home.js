@@ -22,15 +22,32 @@ function shortCpuName(raw) {
   return clean.length > 26 ? `${clean.slice(0, 25)}…` : clean;
 }
 
-function parseEventDate(iso) {
+function isDateOnlyIso(iso) {
+  return typeof iso === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(iso.trim());
+}
+
+function parseLocalDateParts(iso) {
+  if (!iso || typeof iso !== 'string') return null;
+  const m = iso.trim().match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return null;
+  return { y: Number(m[1]), mo: Number(m[2]), d: Number(m[3]) };
+}
+
+function parseEventDate(iso, endOfDay = false) {
   if (!iso || typeof iso !== 'string') return null;
   const trimmed = iso.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
     const [y, m, d] = trimmed.split('-').map(Number);
-    return new Date(y, m - 1, d, 0, 0, 0, 0);
+    return endOfDay
+      ? new Date(y, m - 1, d, 23, 59, 59, 999)
+      : new Date(y, m - 1, d, 0, 0, 0, 0);
   }
   const dt = new Date(trimmed);
   return Number.isNaN(dt.getTime()) ? null : dt;
+}
+
+function safeArtworkUrl(raw) {
+  return typeof raw === 'string' && raw.startsWith('data:image/') ? raw : '';
 }
 
 function formatTimeShort(date) {
@@ -58,40 +75,51 @@ const SHORT_DAYS_PT = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
 function pickNextAgendaEvent(events, now) {
   if (!Array.isArray(events) || !events.length) return null;
   const nowMs = now.getTime();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
+  const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999).getTime();
 
   let best = null;
   for (const ev of events) {
     if (!ev || !ev.start_iso) continue;
-    const start = parseEventDate(ev.start_iso);
-    if (!start) continue;
+    const allDay = Boolean(ev.all_day) || isDateOnlyIso(ev.start_iso);
 
-    if (ev.all_day) {
-      const end = ev.end_iso ? parseEventDate(ev.end_iso) : null;
+    if (allDay) {
+      const startParts = parseLocalDateParts(ev.day_key || ev.start_iso);
+      const start = startParts
+        ? new Date(startParts.y, startParts.mo - 1, startParts.d, 0, 0, 0, 0)
+        : parseEventDate(ev.start_iso, false);
+      if (!start) continue;
+
+      const endParts = ev.end_iso ? parseLocalDateParts(ev.end_iso) : null;
+      const end = endParts
+        ? new Date(endParts.y, endParts.mo - 1, endParts.d, 0, 0, 0, 0)
+        : null;
       const endMs = end && end.getTime() > start.getTime()
         ? end.getTime()
-        : start.getTime() + 86_400_000;
-      if (endMs <= todayStart) continue;
-      const isNow = start.getTime() < todayEnd && endMs > todayStart;
-      best = { ev, start, end, isNow };
+        : new Date(start.getFullYear(), start.getMonth(), start.getDate(), 23, 59, 59, 999).getTime();
+
+      if (!ev.is_today && endMs < todayStart) continue;
+      const isNow = Boolean(ev.is_today) || (start.getTime() <= todayEnd && endMs >= todayStart);
+      best = { ev, start, end, isNow, allDay: true };
       break;
     }
 
-    const end = ev.end_iso ? parseEventDate(ev.end_iso) : null;
+    const start = parseEventDate(ev.start_iso, false);
+    if (!start) continue;
+    const end = ev.end_iso ? parseEventDate(ev.end_iso, false) : null;
     const effectiveEndMs = end && end.getTime() > start.getTime()
       ? end.getTime()
       : start.getTime() + 3_600_000;
     if (effectiveEndMs <= nowMs) continue;
     const isNow = start.getTime() <= nowMs && effectiveEndMs > nowMs;
-    best = { ev, start, end, isNow };
+    best = { ev, start, end, isNow, allDay: false };
     break;
   }
   return best;
 }
 
 function formatAgendaWhen(picked, now) {
-  const { ev, start, end } = picked;
+  const { ev, start, end, allDay } = picked;
   let dayLabel = '';
   if (ev.is_today || isSameDay(start, now)) {
     dayLabel = 'Hoje';
@@ -101,7 +129,7 @@ function formatAgendaWhen(picked, now) {
     dayLabel = `${SHORT_DAYS_PT[start.getDay()]} ${String(start.getDate()).padStart(2, '0')}/${String(start.getMonth() + 1).padStart(2, '0')}`;
   }
 
-  if (ev.all_day) {
+  if (allDay || ev.all_day) {
     return `${dayLabel} · Dia todo`;
   }
   const startStr = formatTimeShort(start);
@@ -338,7 +366,7 @@ function getMediaCardData(ctx) {
   const title = media?.title || 'Nada tocando';
   const artist = media?.artist || (media?.app ? media.app : 'Toque para abrir controles');
   const app = media?.app || 'Mídia';
-  const art = media?.artwork_data_url || '';
+  const art = safeArtworkUrl(media?.artwork_data_url);
   const artKey = art ? `${art.length}:${art.slice(-24)}` : '';
   const statusLabel = playing ? 'Tocando' : (media?.status === 'Paused' ? 'Pausado' : '');
 
@@ -546,7 +574,8 @@ function ensureShell(mount) {
 function syncMediaArtwork(cardEl, art, artKey, icons) {
   const thumb = cardEl.querySelector('[data-home-media-thumb]');
   if (!thumb) return;
-  if (!art) {
+  const validArt = safeArtworkUrl(art);
+  if (!validArt) {
     if (thumb.querySelector('img')) {
       thumb.innerHTML = icons.icon('music', 20);
     }
@@ -560,10 +589,10 @@ function syncMediaArtwork(cardEl, art, artKey, icons) {
     img.alt = '';
     img.decoding = 'async';
     thumb.appendChild(img);
-    img.src = art;
+    img.src = validArt;
     mediaArtworkKey = artKey;
   } else if (mediaArtworkKey !== artKey) {
-    img.src = art;
+    img.src = validArt;
     mediaArtworkKey = artKey;
   }
 }
