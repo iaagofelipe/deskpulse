@@ -1,4 +1,5 @@
 pub mod adb;
+pub mod ai;
 pub mod antigravity;
 pub mod media;
 pub mod network;

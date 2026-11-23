@@ -1,4 +1,6 @@
+use crate::monitors::ai::{AiSnapshot, UsageRecord};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -573,8 +575,143 @@ fn scan_antigravity_dir_at(root: &Path, now: SystemTime) -> AntigravitySnapshot 
     AntigravitySnapshot { sessions }
 }
 
+const USAGE_SCAN_WINDOW: Duration = Duration::from_secs(8 * 24 * 3600);
+
+#[allow(dead_code)]
+pub fn parse_usage_records_from_str(raw: &str) -> Vec<UsageRecord> {
+    let mut records = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('{') {
+            continue;
+        }
+        let Ok(serde_json::Value::Object(obj)) = serde_json::from_str::<serde_json::Value>(trimmed)
+        else {
+            continue;
+        };
+
+        let Some(created_at_ms) = parse_created_at_ms(&obj) else {
+            continue;
+        };
+
+        let entry_type = obj.get("type").and_then(|v| v.as_str());
+        let input_tokens = obj.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let output_tokens = obj.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+        let cache_read_tokens = obj
+            .get("cache_read_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let total_tokens = input_tokens
+            .saturating_add(output_tokens)
+            .saturating_add(cache_read_tokens);
+
+        let is_planner = entry_type == Some("PLANNER_RESPONSE");
+        let is_user = entry_type == Some("USER_INPUT");
+        let is_message = is_planner || is_user;
+
+        if total_tokens == 0 && !is_message {
+            continue;
+        }
+
+        let model = match obj.get("model").and_then(|v| v.as_str()).map(str::trim) {
+            Some(m) if !m.is_empty() => m.to_string(),
+            _ => {
+                if total_tokens > 0 {
+                    "unknown".to_string()
+                } else {
+                    String::new()
+                }
+            }
+        };
+
+        records.push(UsageRecord {
+            created_at_ms,
+            model,
+            input_tokens,
+            output_tokens,
+            cache_read_tokens,
+            is_message,
+        });
+    }
+    records
+}
+
+#[allow(dead_code)]
+pub fn scan_usage_records_cached(
+    root: &Path,
+    cache: &mut HashMap<PathBuf, (u64, u64, Vec<UsageRecord>)>,
+    now: SystemTime,
+) -> Vec<UsageRecord> {
+    let brain_root = root.join("brain");
+    let Ok(entries) = fs::read_dir(&brain_root) else {
+        return Vec::new();
+    };
+
+    let mut all_records = Vec::new();
+
+    for entry in entries.flatten() {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        if !ft.is_dir() {
+            continue;
+        }
+        let id = entry.file_name().to_string_lossy().into_owned();
+        if id.is_empty() || id.starts_with('.') {
+            continue;
+        }
+
+        let brain_dir = entry.path();
+        let Some(tx_path) = resolve_transcript_path(&brain_dir) else {
+            continue;
+        };
+
+        let Ok(meta) = fs::metadata(&tx_path) else {
+            continue;
+        };
+        let Ok(mtime) = meta.modified() else {
+            continue;
+        };
+        let age = now.duration_since(mtime).unwrap_or(Duration::ZERO);
+        if age > USAGE_SCAN_WINDOW {
+            continue;
+        }
+
+        let mtime_ms = mtime
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let len = meta.len();
+
+        let records = if let Some((cached_mtime, cached_len, cached_recs)) = cache.get(&tx_path) {
+            if *cached_mtime == mtime_ms && *cached_len == len {
+                cached_recs.clone()
+            } else {
+                let recs = fs::read_to_string(&tx_path)
+                    .map(|raw| parse_usage_records_from_str(&raw))
+                    .unwrap_or_default();
+                cache.insert(tx_path.clone(), (mtime_ms, len, recs.clone()));
+                recs
+            }
+        } else {
+            let recs = fs::read_to_string(&tx_path)
+                .map(|raw| parse_usage_records_from_str(&raw))
+                .unwrap_or_default();
+            cache.insert(tx_path.clone(), (mtime_ms, len, recs.clone()));
+            recs
+        };
+
+        all_records.extend(records);
+    }
+
+    all_records
+}
+
 pub struct AntigravityMonitor {
     latest: Arc<RwLock<AntigravitySnapshot>>,
+    ai_latest: Arc<RwLock<AiSnapshot>>,
+    budget_5h: Arc<RwLock<Option<u64>>>,
+    budget_weekly: Arc<RwLock<Option<u64>>>,
     collector_thread: Arc<RwLock<Option<String>>>,
 }
 
@@ -585,8 +722,15 @@ impl AntigravityMonitor {
 
     pub fn spawn_for_dir(root: PathBuf, shutdown: watch::Receiver<bool>) -> Self {
         let latest = Arc::new(RwLock::new(AntigravitySnapshot::default()));
+        let ai_latest = Arc::new(RwLock::new(AiSnapshot::default()));
+        let budget_5h = Arc::new(RwLock::new(None));
+        let budget_weekly = Arc::new(RwLock::new(None));
         let collector_thread = Arc::new(RwLock::new(None));
+
         let latest_bg = Arc::clone(&latest);
+        let ai_latest_bg = Arc::clone(&ai_latest);
+        let budget_5h_bg = Arc::clone(&budget_5h);
+        let budget_weekly_bg = Arc::clone(&budget_weekly);
         let thread_bg = Arc::clone(&collector_thread);
 
         let _ = std::thread::Builder::new()
@@ -596,11 +740,35 @@ impl AntigravityMonitor {
                     *name_w = std::thread::current().name().map(str::to_string);
                 }
 
+                let mut usage_cache: HashMap<PathBuf, (u64, u64, Vec<UsageRecord>)> = HashMap::new();
+
                 let initial = scan_antigravity_dir(&root);
                 if let Ok(mut w) = latest_bg.write() {
-                    *w = initial;
+                    *w = initial.clone();
                 }
 
+                let now_time = SystemTime::now();
+                let now_ms = now_time
+                    .duration_since(UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let records = scan_usage_records_cached(&root, &mut usage_cache, now_time);
+                let b_5h = budget_5h_bg.read().ok().and_then(|g| *g);
+                let b_weekly = budget_weekly_bg.read().ok().and_then(|g| *g);
+                let initial_ai = crate::monitors::ai::aggregate_usage(
+                    "antigravity",
+                    "Antigravity",
+                    &records,
+                    initial.sessions,
+                    now_ms,
+                    b_5h,
+                    b_weekly,
+                );
+                if let Ok(mut w) = ai_latest_bg.write() {
+                    *w = initial_ai;
+                }
+
+                let mut tick = 0u64;
                 loop {
                     for _ in 0..10 {
                         if *shutdown.borrow() {
@@ -612,15 +780,44 @@ impl AntigravityMonitor {
                         return;
                     }
 
+                    tick = tick.wrapping_add(1);
+
                     let snap = scan_antigravity_dir(&root);
                     if let Ok(mut w) = latest_bg.write() {
-                        *w = snap;
+                        *w = snap.clone();
+                    }
+
+                    // Refresh usage aggregation every 10s (every 5 ticks of 2s)
+                    if tick % 5 == 0 {
+                        let now_time = SystemTime::now();
+                        let now_ms = now_time
+                            .duration_since(UNIX_EPOCH)
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0);
+                        let records = scan_usage_records_cached(&root, &mut usage_cache, now_time);
+                        let b_5h = budget_5h_bg.read().ok().and_then(|g| *g);
+                        let b_weekly = budget_weekly_bg.read().ok().and_then(|g| *g);
+                        let ai_snap = crate::monitors::ai::aggregate_usage(
+                            "antigravity",
+                            "Antigravity",
+                            &records,
+                            snap.sessions,
+                            now_ms,
+                            b_5h,
+                            b_weekly,
+                        );
+                        if let Ok(mut w) = ai_latest_bg.write() {
+                            *w = ai_snap;
+                        }
                     }
                 }
             });
 
         Self {
             latest,
+            ai_latest,
+            budget_5h,
+            budget_weekly,
             collector_thread,
         }
     }
@@ -636,6 +833,35 @@ impl AntigravityMonitor {
     #[allow(dead_code)]
     pub fn collector_thread_name(&self) -> Option<String> {
         self.collector_thread.read().ok().and_then(|g| g.clone())
+    }
+
+    #[allow(dead_code)]
+    pub fn ai_snapshot(&self) -> AiSnapshot {
+        self.ai_latest
+            .read()
+            .ok()
+            .map(|g| g.clone())
+            .unwrap_or_default()
+    }
+
+    #[allow(dead_code)]
+    pub fn update_budgets(&self, budget_5h: Option<u64>, budget_weekly: Option<u64>) {
+        if let Ok(mut b) = self.budget_5h.write() {
+            *b = budget_5h;
+        }
+        if let Ok(mut b) = self.budget_weekly.write() {
+            *b = budget_weekly;
+        }
+        if let Ok(mut w) = self.ai_latest.write() {
+            w.window_5h.budget_tokens = budget_5h;
+            w.window_5h.pct = budget_5h
+                .filter(|&b| b > 0)
+                .map(|b| (w.window_5h.tokens as f32 / b as f32 * 100.0).min(100.0));
+            w.weekly.budget_tokens = budget_weekly;
+            w.weekly.pct = budget_weekly
+                .filter(|&b| b > 0)
+                .map(|b| (w.weekly.tokens as f32 / b as f32 * 100.0).min(100.0));
+        }
     }
 }
 
@@ -902,6 +1128,15 @@ mod tests {
         );
         assert_eq!(monitor.snapshot().sessions[0].status, "running");
 
+        let initial_ai = monitor.ai_snapshot();
+        assert_eq!(initial_ai.provider, "antigravity");
+        assert_eq!(initial_ai.provider_label, "Antigravity");
+
+        monitor.update_budgets(Some(100_000), Some(500_000));
+        let updated_ai = monitor.ai_snapshot();
+        assert_eq!(updated_ai.window_5h.budget_tokens, Some(100_000));
+        assert_eq!(updated_ai.weekly.budget_tokens, Some(500_000));
+
         let _ = tx.send(true);
     }
 
@@ -957,5 +1192,66 @@ mod tests {
         assert_eq!(snap.sessions.len(), MAX_SESSIONS);
         assert_eq!(snap.sessions[0].id, active_id);
         assert_eq!(snap.sessions[0].status, "running");
+    }
+
+    #[test]
+    fn test_parse_usage_records_skips_malformed_lines_and_caches_by_mtime() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        let logs_dir = root
+            .join("brain")
+            .join("sess_cache")
+            .join(".system_generated")
+            .join("logs");
+        fs::create_dir_all(&logs_dir).unwrap();
+        let tx_path = logs_dir.join("transcript.jsonl");
+
+        let content = [
+            // Malformed JSON
+            r#"{"step_index":0, "created_at":"#,
+            // Missing created_at
+            r#"{"step_index":1,"type":"PLANNER_RESPONSE","model":"gemini-4-neon-high","input_tokens":100}"#,
+            // Valid with missing model, has tokens -> model defaults to "unknown"
+            r#"{"step_index":2,"type":"PLANNER_RESPONSE","created_at":"2026-11-23T12:00:00Z","input_tokens":500,"output_tokens":50}"#,
+            // Valid with model and tokens
+            r#"{"step_index":3,"type":"PLANNER_RESPONSE","created_at":"2026-11-23T12:01:00Z","model":"gemini-4-neon-high","input_tokens":1000,"output_tokens":200,"cache_read_tokens":300}"#,
+            // Valid USER_INPUT with 0 tokens -> is_message is true
+            r#"{"step_index":4,"type":"USER_INPUT","created_at":"2026-11-23T12:02:00Z","content":"Hello"}"#,
+            // SYSTEM_MESSAGE with 0 tokens -> skipped
+            r#"{"step_index":5,"type":"SYSTEM_MESSAGE","created_at":"2026-11-23T12:03:00Z","content":"System init"}"#,
+        ]
+        .join("\n");
+
+        fs::write(&tx_path, &content).unwrap();
+
+        // 1. Direct parsing check
+        let records = parse_usage_records_from_str(&content);
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].model, "unknown");
+        assert_eq!(records[0].input_tokens, 500);
+        assert_eq!(records[0].output_tokens, 50);
+        assert!(records[0].is_message);
+
+        assert_eq!(records[1].model, "gemini-4-neon-high");
+        assert_eq!(records[1].input_tokens, 1000);
+        assert_eq!(records[1].output_tokens, 200);
+        assert_eq!(records[1].cache_read_tokens, 300);
+        assert!(records[1].is_message);
+
+        assert_eq!(records[2].input_tokens, 0);
+        assert!(records[2].is_message);
+
+        // 2. Incremental stat cache check
+        let now = SystemTime::now();
+        let mut cache: HashMap<PathBuf, (u64, u64, Vec<UsageRecord>)> = HashMap::new();
+
+        let cached_records_1 = scan_usage_records_cached(root, &mut cache, now);
+        assert_eq!(cached_records_1.len(), 3);
+        assert_eq!(cache.len(), 1);
+
+        // Second run with unchanged file must hit cache
+        let cached_records_2 = scan_usage_records_cached(root, &mut cache, now);
+        assert_eq!(cached_records_2.len(), 3);
+        assert_eq!(cached_records_2, cached_records_1);
     }
 }
