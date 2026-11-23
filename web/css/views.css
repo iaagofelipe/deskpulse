@@ -826,12 +826,27 @@
   min-width: 0;
 }
 
+.ai-toolbar .segmented {
+  flex-shrink: 0;
+}
+
 .ai-controls {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
   flex-shrink: 1;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.ai-controls::-webkit-scrollbar {
+  display: none;
+}
+
+.ai-provider-badge {
+  flex-shrink: 0;
 }
 
 .ai-ctrl-btn {
@@ -847,6 +862,7 @@
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
+  flex-shrink: 0;
   transition: background var(--t-fast) var(--ease), border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease), transform 90ms ease;
 }
 
@@ -2009,6 +2025,15 @@
   min-height: 0;
 }
 
+.gh-delta {
+  display: inline-block;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+
 .gh-week-top {
   display: flex;
   align-items: baseline;
@@ -2400,6 +2425,19 @@
     font-size: 22px;
   }
 
+  .ai-toolbar {
+    gap: 6px;
+  }
+
+  .ai-toolbar .seg-btn {
+    padding: 4px 9px;
+    font-size: 11px;
+  }
+
+  .ai-controls {
+    gap: 4px;
+  }
+
   .ai-ctrl-btn {
     padding: 4px 7px;
     font-size: 10.5px;
@@ -2562,5 +2600,30 @@
   .timer-done-icon {
     width: 46px;
     height: 46px;
+  }
+}
+
+@media (max-width: 720px) {
+  .ai-provider-badge {
+    display: none;
+  }
+
+  .ai-toolbar {
+    gap: 5px;
+  }
+
+  .ai-toolbar .seg-btn {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+
+  .ai-controls {
+    gap: 4px;
+  }
+
+  .ai-ctrl-btn {
+    padding: 4px 6px;
+    font-size: 10px;
+    gap: 3px;
   }
 }

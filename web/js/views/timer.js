@@ -9,7 +9,10 @@ let tickInterval = null;
 
 let mountedEl = null;
 let latestCtx = null;
-let lastSig = '';
+let renderedMode = ''; // '' | 'active' | 'done'
+let lastRingModeSig = '';
+let lastControlsSig = '';
+let lastRemainingRendered = -1;
 
 function formatMMSS(secs) {
   const clamped = Math.max(0, Math.floor(Number(secs) || 0));
@@ -149,35 +152,17 @@ function buildDoneHtml(ctx) {
     </div>`;
 }
 
-function buildActiveHtml(ctx) {
-  const { icons, charts } = ctx;
-  const running = status === 'running';
-  const paused = status === 'paused';
-  const progress = totalSecs > 0 ? Math.max(0, Math.min(1, remainingSecs / totalSecs)) : 0;
-  const subLabel = running ? 'Em andamento' : paused ? 'Pausado' : 'Pronto';
-
-  const ringSvg = charts.renderTimerRing({
-    progress,
-    label: formatMMSS(remainingSecs),
-    sub: subLabel,
-    active: running,
-  });
-
-  const presetsHtml = PRESET_MINUTES.map((m) => {
-    const isActive = presetMinutes === m;
-    return `
-      <button type="button" class="timer-preset-btn num${isActive ? ' is-active' : ''}" data-action="timer-preset" data-minutes="${m}" aria-pressed="${isActive ? 'true' : 'false'}">
+function buildActiveShellHtml(ctx) {
+  const { icons } = ctx;
+  const presetsHtml = PRESET_MINUTES.map((m) => `
+      <button type="button" class="timer-preset-btn num" data-action="timer-preset" data-minutes="${m}" aria-pressed="false">
         ${m}m
-      </button>`;
-  }).join('');
-
-  const primaryLabel = running ? 'Pausar' : paused ? 'Retomar' : 'Iniciar';
-  const primaryIcon = running ? 'pause' : 'play';
+      </button>`).join('');
 
   return `
     <div class="timer-layout">
       <div class="timer-ring-col">
-        <div class="timer-ring-box">${ringSvg}</div>
+        <div class="timer-ring-box" data-timer-ring></div>
       </div>
       <div class="timer-controls-col">
         <div class="timer-preset-block">
@@ -190,9 +175,9 @@ function buildActiveHtml(ctx) {
           </div>
         </div>
         <div class="timer-actions">
-          <button type="button" class="timer-hero-btn${running ? ' is-running' : ''}" data-action="timer-toggle">
-            ${icons.icon(primaryIcon, 19)}
-            <span>${primaryLabel}</span>
+          <button type="button" class="timer-hero-btn" data-action="timer-toggle">
+            <span data-timer-toggle-icon style="display:inline-flex"></span>
+            <span data-timer-toggle-label>Iniciar</span>
           </button>
           <button type="button" class="timer-reset-btn" data-action="timer-reset" aria-label="Reiniciar timer" title="Reiniciar">
             ${icons.icon('rotate_ccw', 16)}
@@ -203,24 +188,116 @@ function buildActiveHtml(ctx) {
     </div>`;
 }
 
+function updateRingDom(ctx, forceFullRing) {
+  if (!mountedEl) return;
+  const ringBox = mountedEl.querySelector('[data-timer-ring]');
+  if (!ringBox) return;
+
+  const running = status === 'running';
+  const paused = status === 'paused';
+  const progress = totalSecs > 0 ? Math.max(0, Math.min(1, remainingSecs / totalSecs)) : 0;
+  const label = formatMMSS(remainingSecs);
+  const sub = running ? 'Em andamento' : paused ? 'Pausado' : 'Pronto';
+  const ringModeSig = `${running ? 1 : 0}|${sub}`;
+
+  const svg = ringBox.querySelector('svg');
+  const progressCircle = svg ? svg.querySelector('circle[stroke-dasharray]') : null;
+  const textEls = svg ? svg.querySelectorAll('text') : [];
+
+  if (
+    !forceFullRing &&
+    svg &&
+    progressCircle &&
+    textEls.length >= 1 &&
+    ringModeSig === lastRingModeSig
+  ) {
+    // Patch SVG in place so stroke-dashoffset CSS transition stays smooth across ticks
+    const circumference = Number(progressCircle.getAttribute('stroke-dasharray')) || (2 * Math.PI * 90);
+    const dashOffset = circumference * (1 - progress);
+    progressCircle.setAttribute('stroke-dashoffset', dashOffset.toFixed(2));
+    textEls[0].textContent = label;
+    svg.setAttribute('aria-label', `Timer ${label} ${sub}`);
+    return;
+  }
+
+  lastRingModeSig = ringModeSig;
+  ringBox.innerHTML = ctx.charts.renderTimerRing({
+    progress,
+    label,
+    sub,
+    active: running,
+  });
+}
+
+function updateControlsDom(ctx) {
+  if (!mountedEl) return;
+  const controlsSig = `${status}|${presetMinutes}`;
+  if (controlsSig === lastControlsSig) return;
+  lastControlsSig = controlsSig;
+
+  const running = status === 'running';
+  const paused = status === 'paused';
+
+  mountedEl.querySelectorAll('[data-action="timer-preset"]').forEach((btn) => {
+    const isActive = Number(btn.dataset.minutes) === presetMinutes;
+    btn.classList.toggle('is-active', isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+  });
+
+  const toggleBtn = mountedEl.querySelector('[data-action="timer-toggle"]');
+  const toggleIcon = mountedEl.querySelector('[data-timer-toggle-icon]');
+  const toggleLabel = mountedEl.querySelector('[data-timer-toggle-label]');
+  if (toggleBtn) {
+    toggleBtn.classList.toggle('is-running', running);
+  }
+  if (toggleIcon) {
+    toggleIcon.innerHTML = ctx.icons.icon(running ? 'pause' : 'play', 19);
+  }
+  if (toggleLabel) {
+    toggleLabel.textContent = running ? 'Pausar' : paused ? 'Retomar' : 'Iniciar';
+  }
+}
+
 function paint(force = false) {
   if (!mountedEl || !latestCtx) return;
 
-  const sig = `${status}|${presetMinutes}|${totalSecs}|${remainingSecs}`;
-  if (!force && sig === lastSig) return;
-  lastSig = sig;
+  const nextMode = status === 'done' ? 'done' : 'active';
+  if (nextMode === 'done') {
+    if (force || renderedMode !== 'done') {
+      renderedMode = 'done';
+      lastRingModeSig = '';
+      lastControlsSig = '';
+      lastRemainingRendered = -1;
+      mountedEl.innerHTML = buildDoneHtml(latestCtx);
+    }
+    return;
+  }
 
-  if (status === 'done') {
-    mountedEl.innerHTML = buildDoneHtml(latestCtx);
-  } else {
-    mountedEl.innerHTML = buildActiveHtml(latestCtx);
+  let mountedFreshShell = false;
+  if (renderedMode !== 'active' || !mountedEl.querySelector('.timer-layout')) {
+    renderedMode = 'active';
+    lastRingModeSig = '';
+    lastControlsSig = '';
+    lastRemainingRendered = -1;
+    mountedEl.innerHTML = buildActiveShellHtml(latestCtx);
+    mountedFreshShell = true;
+  }
+
+  updateControlsDom(latestCtx);
+
+  if (force || mountedFreshShell || remainingSecs !== lastRemainingRendered) {
+    lastRemainingRendered = remainingSecs;
+    updateRingDom(latestCtx, mountedFreshShell);
   }
 }
 
 function bindMount(mount) {
   if (mountedEl === mount) return;
   mountedEl = mount;
-  lastSig = '';
+  renderedMode = '';
+  lastRingModeSig = '';
+  lastControlsSig = '';
+  lastRemainingRendered = -1;
 
   mount.addEventListener('click', (ev) => {
     const presetBtn = ev.target.closest('[data-action="timer-preset"]');

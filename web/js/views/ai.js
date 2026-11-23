@@ -66,6 +66,7 @@ function formatEventKind(kind) {
   if (!k) return 'Evento';
   if (k === 'stop') return 'Conclusão';
   if (k === 'approval') return 'Aprovação';
+  if (k === 'ask_question') return 'Pergunta';
   if (k === 'notify') return 'Alerta';
   if (k === 'error') return 'Erro';
   return kind;
@@ -476,7 +477,7 @@ function buildToolbarControls(ctx) {
   ].join('|');
 
   const html = `
-    <span class="badge badge-ai">${icons.icon('ai', 12)}<span>${escapeHtml(providerLabel)}</span></span>
+    <span class="badge badge-ai ai-provider-badge">${icons.icon('ai', 12)}<span>${escapeHtml(providerLabel)}</span></span>
     <button type="button" class="ai-ctrl-btn ${approvalOn ? 'is-on' : 'is-off'}" data-action="toggle-approval" ${approvalToggling ? 'disabled' : ''} title="Alternar aprovação remota">
       ${icons.icon(approvalOn ? 'check' : 'x', 12)}
       <span>Aprovação: ${approvalOn ? 'ON' : 'OFF'}</span>

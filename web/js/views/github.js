@@ -76,11 +76,11 @@ function buildConfiguredHtml(ctx, gh) {
   const delta = thisWeekTotal - lastWeekTotal;
   let deltaBadge;
   if (delta > 0) {
-    deltaBadge = `<span class="badge badge-ok num">+${delta} vs sem. passada</span>`;
+    deltaBadge = `<span class="badge badge-ok gh-delta num" title="+${delta} vs sem. passada">+${delta} vs sem. passada</span>`;
   } else if (delta < 0) {
-    deltaBadge = `<span class="badge badge-warn num">${delta} vs sem. passada</span>`;
+    deltaBadge = `<span class="badge badge-warn gh-delta num" title="${delta} vs sem. passada">${delta} vs sem. passada</span>`;
   } else {
-    deltaBadge = '<span class="badge num">igual</span>';
+    deltaBadge = '<span class="badge gh-delta num" title="igual">igual</span>';
   }
 
   const compareSvg = charts.renderCompareBars({
