@@ -1,1 +1,6 @@
-/* stub */
+.screensaver-overlay {
+    z-index: 40;
+}
+.approval-overlay {
+    z-index: 80;
+}

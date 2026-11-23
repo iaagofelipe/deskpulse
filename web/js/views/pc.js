@@ -1,1 +1,1 @@
-/* stub */
+export function render(ctx) {}

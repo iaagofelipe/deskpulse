@@ -1,1 +1,1 @@
-/* stub */
+export function icon(name, size) { return ""; }

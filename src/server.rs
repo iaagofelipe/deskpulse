@@ -1661,4 +1661,44 @@ mod tests {
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
     }
+
+    #[tokio::test]
+    async fn test_frontend_shell_contains_9_tabs_and_screensaver_zindex_hierarchy() {
+        let index_html = include_str!("../web/index.html");
+        assert!(index_html.contains("id=\"view-home\""));
+        assert!(index_html.contains("id=\"view-pc\""));
+        assert!(index_html.contains("id=\"view-ai\""));
+        assert!(index_html.contains("id=\"view-agenda\""));
+        assert!(index_html.contains("id=\"view-weather\""));
+        assert!(index_html.contains("id=\"view-media\""));
+        assert!(index_html.contains("id=\"view-github\""));
+        assert!(index_html.contains("id=\"view-shortcuts\""));
+        assert!(index_html.contains("id=\"view-timer\""));
+        assert!(index_html.contains("id=\"screensaverOverlay\""));
+        assert!(index_html.contains("id=\"approvalOverlay\""));
+
+        let layout_css = include_str!("../web/css/layout.css");
+
+        // Simple validation: Ensure approval has a higher z-index than screensaver
+        // It's a crude regex but works for the test. We will parse the exact integers if needed.
+        let screensaver_z = extract_z_index(layout_css, ".screensaver-overlay");
+        let approval_z = extract_z_index(layout_css, ".approval-overlay");
+        
+        assert!(approval_z > screensaver_z, "approval z-index {} must be greater than screensaver z-index {}", approval_z, screensaver_z);
+    }
+
+    fn extract_z_index(css: &str, selector: &str) -> i32 {
+        if let Some(idx) = css.find(selector) {
+            let block_start = css[idx..].find('{').map(|i| idx + i).unwrap_or(idx);
+            let block_end = css[block_start..].find('}').map(|i| block_start + i).unwrap_or(css.len());
+            let block = &css[block_start..block_end];
+            if let Some(z_idx) = block.find("z-index:") {
+                let rest = &block[z_idx + 8..];
+                let end = rest.find(';').unwrap_or(rest.len());
+                let val_str = rest[..end].trim();
+                return val_str.parse().unwrap_or(0);
+            }
+        }
+        0
+    }
 }
