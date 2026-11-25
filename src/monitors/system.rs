@@ -25,6 +25,15 @@ pub struct DiskSnapshot {
     pub total_gb: f64,
 }
 
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct BatterySnapshot {
+    pub percent: u8,
+    pub charging: bool,
+    pub ac_plugged: bool,
+    pub battery_saver: bool,
+    pub time_remaining_sec: Option<u32>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PcSnapshot {
     pub cpu_pct: f32,
@@ -35,6 +44,7 @@ pub struct PcSnapshot {
     pub net_up_bps: u64,
     pub disks: Vec<DiskSnapshot>,
     pub gpu: Option<GpuSnapshot>,
+    pub battery: Option<BatterySnapshot>,
     pub uptime_sec: u64,
     pub cpu_history: Vec<u8>,
     pub gpu_history: Vec<u8>,
@@ -77,6 +87,59 @@ pub fn is_workstation_locked() -> bool {
 #[cfg(not(windows))]
 pub fn is_workstation_locked() -> bool {
     false
+}
+
+pub fn parse_power_status(
+    ac_line_status: u8,
+    battery_flag: u8,
+    battery_life_percent: u8,
+    system_status_flag: u8,
+    battery_life_time: u32,
+) -> Option<BatterySnapshot> {
+    // 128 (0x80) = no system battery, 255 (0xFF) = unknown status
+    if battery_flag == 255 || (battery_flag & 128) != 0 || battery_life_percent == 255 {
+        return None;
+    }
+    let percent = battery_life_percent.min(100);
+    let ac_plugged = ac_line_status == 1;
+    let charging = (battery_flag & 8) != 0;
+    let battery_saver = system_status_flag == 1;
+    let time_remaining_sec =
+        if !ac_plugged && !charging && battery_life_time != u32::MAX && battery_life_time > 0 {
+            Some(battery_life_time)
+        } else {
+            None
+        };
+    Some(BatterySnapshot {
+        percent,
+        charging,
+        ac_plugged,
+        battery_saver,
+        time_remaining_sec,
+    })
+}
+
+#[cfg(windows)]
+pub fn query_battery_status() -> Option<BatterySnapshot> {
+    use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
+    let mut status = SYSTEM_POWER_STATUS::default();
+    unsafe {
+        if GetSystemPowerStatus(&mut status).is_err() {
+            return None;
+        }
+    }
+    parse_power_status(
+        status.ACLineStatus,
+        status.BatteryFlag,
+        status.BatteryLifePercent,
+        status.SystemStatusFlag,
+        status.BatteryLifeTime,
+    )
+}
+
+#[cfg(not(windows))]
+pub fn query_battery_status() -> Option<BatterySnapshot> {
+    None
 }
 
 fn parse_optional_f32(raw: &str) -> Option<f32> {
@@ -168,6 +231,7 @@ fn collect_pc_snapshot(
     push_history(gpu_history, gpu_pct);
 
     let pc_locked = is_workstation_locked();
+    let battery = query_battery_status();
 
     let cpu_name = sys
         .cpus()
@@ -220,6 +284,7 @@ fn collect_pc_snapshot(
         net_up_bps,
         disks: disk_snaps,
         gpu,
+        battery,
         uptime_sec: System::uptime(),
         cpu_history: cpu_history.clone(),
         gpu_history: gpu_history.clone(),
@@ -362,6 +427,51 @@ mod tests {
 
         assert!(parse_nvidia_smi_line("").is_none());
         assert!(parse_nvidia_smi_line("bad").is_none());
+    }
+
+    #[test]
+    fn test_parse_power_status_handles_desktop_charging_and_discharging() {
+        // Desktop / no battery (flag 128) or unknown (255)
+        assert_eq!(parse_power_status(1, 128, 255, 0, u32::MAX), None);
+        assert_eq!(parse_power_status(1, 128, 100, 0, u32::MAX), None);
+        assert_eq!(parse_power_status(255, 255, 255, 0, u32::MAX), None);
+        assert_eq!(parse_power_status(0, 1, 255, 0, 3600), None);
+
+        // Discharging on battery with remaining time and battery saver
+        assert_eq!(
+            parse_power_status(0, 2, 18, 1, 2700),
+            Some(BatterySnapshot {
+                percent: 18,
+                charging: false,
+                ac_plugged: false,
+                battery_saver: true,
+                time_remaining_sec: Some(2700),
+            })
+        );
+
+        // Charging on AC (remaining time ignored while charging)
+        assert_eq!(
+            parse_power_status(1, 9, 64, 0, 5400),
+            Some(BatterySnapshot {
+                percent: 64,
+                charging: true,
+                ac_plugged: true,
+                battery_saver: false,
+                time_remaining_sec: None,
+            })
+        );
+
+        // Plugged in at 100%, not actively charging; clamps > 100
+        assert_eq!(
+            parse_power_status(1, 1, 105, 0, u32::MAX),
+            Some(BatterySnapshot {
+                percent: 100,
+                charging: false,
+                ac_plugged: true,
+                battery_saver: false,
+                time_remaining_sec: None,
+            })
+        );
     }
 
     #[tokio::test]

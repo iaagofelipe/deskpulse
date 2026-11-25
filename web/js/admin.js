@@ -43,7 +43,7 @@ const SECTION_META = {
   general: ['Geral & Aparência', 'Tema, comportamento USB, tela inicial e modo descanso OLED.'],
   weather: ['Clima', 'Configure cidade, coordenadas opcionais e unidade de temperatura.'],
   github: ['GitHub', 'Configure seu usuário e Personal Access Token (GraphQL).'],
-  agenda: ['Agenda', 'Gerencie o feed iCal (.ics) e acompanhe os eventos sincronizados.'],
+  agenda: ['Agenda & Tarefas', 'Gerencie o feed iCal (.ics), acompanhe compromissos e edite seus To-Dos.'],
   ai: ['IA & Orçamentos', 'Defina limites opcionais de tokens para a janela de 5h e semanal.'],
   shortcuts: ['Atalhos (Stream Deck)', 'Crie, edite, reordene e teste até 16 botões interativos.'],
   raw: ['JSON Bruto', 'Edite o config.json completo diretamente com validação segura.'],
@@ -55,6 +55,10 @@ let draft = null;
 let githubTokenClear = false;
 let dirty = false;
 let streamHandle = null;
+let adminTodos = [];
+let editingTodoId = null;
+let lastAdminTodoSig = '';
+let todoSubmitting = false;
 
 const $ = (id) => document.getElementById(id);
 
@@ -437,6 +441,12 @@ function renderLivePanels() {
     }
   }
 
+  // Agenda To-Dos (live sync from SSE)
+  if (Array.isArray(liveState.todos)) {
+    adminTodos = liveState.todos;
+    renderAdminTodos();
+  }
+
   // AI live box
   const ai = liveState.ai || {};
   const aiBox = $('aiLiveBox');
@@ -495,6 +505,194 @@ function collectPatchFromForm() {
 async function loadConfig() {
   const cfg = await api.apiRequest('GET', '/api/config');
   hydrateFormFromConfig(cfg);
+  try {
+    const todoRes = await api.apiRequest('GET', '/api/todos');
+    if (Array.isArray(todoRes?.todos)) {
+      adminTodos = todoRes.todos;
+      renderAdminTodos({ force: true });
+    }
+  } catch {
+    // SSE will sync todos as soon as connected
+  }
+}
+
+function renderAdminTodos({ force = false } = {}) {
+  const listEl = $('adminTodoList');
+  const badgeEl = $('adminTodoCountBadge');
+  const clearBtn = $('adminTodoClearDoneBtn');
+  if (!listEl) return;
+
+  const todos = Array.isArray(adminTodos) ? adminTodos : [];
+  const total = todos.length;
+  const openCount = todos.filter((t) => t && !t.done).length;
+  const doneCount = total - openCount;
+
+  if (badgeEl) {
+    badgeEl.textContent = total === 0
+      ? '0 tarefas'
+      : `${openCount} ${openCount === 1 ? 'aberta' : 'abertas'} · ${total} total`;
+  }
+  if (clearBtn) {
+    clearBtn.disabled = doneCount === 0;
+  }
+
+  // Keep inline edit input untouched across SSE ticks while user is typing
+  if (editingTodoId && !force) {
+    const stillExists = todos.some((t) => t && String(t.id) === String(editingTodoId));
+    if (stillExists) {
+      return;
+    }
+    editingTodoId = null;
+  }
+
+  const sig = JSON.stringify([editingTodoId, todos]);
+  if (!force && sig === lastAdminTodoSig) return;
+  lastAdminTodoSig = sig;
+
+  if (!todos.length) {
+    listEl.innerHTML = '<div class="admin-todo-empty">Nenhuma tarefa cadastrada. Adicione uma acima para sincronizar com o celular.</div>';
+    return;
+  }
+
+  listEl.innerHTML = todos.map((item) => {
+    const id = String(item?.id ?? '');
+    const text = String(item?.text ?? '');
+    const done = Boolean(item?.done);
+    const isEditing = editingTodoId === id;
+
+    if (isEditing) {
+      return `
+        <div class="admin-todo-item${done ? ' is-done' : ''}" data-todo-id="${api.escapeHtml(id)}">
+          <button type="button" class="admin-todo-check" data-todo-action="toggle" data-todo-id="${api.escapeHtml(id)}" aria-label="Alternar conclusão" title="Concluir / Reabrir">
+            ${done ? icons.icon('check', 13) : ''}
+          </button>
+          <form class="admin-todo-edit-form" data-todo-edit-form data-todo-id="${api.escapeHtml(id)}" autocomplete="off">
+            <input type="text" class="admin-todo-edit-input" data-todo-edit-input maxlength="240" value="${api.escapeHtml(text)}" aria-label="Editar tarefa">
+            <div class="admin-todo-actions">
+              <button type="submit" class="admin-todo-icon-btn is-save" title="Salvar (Enter)" aria-label="Salvar edição">
+                ${icons.icon('check', 14)}
+              </button>
+              <button type="button" class="admin-todo-icon-btn" data-todo-action="cancel-edit" title="Cancelar (Esc)" aria-label="Cancelar edição">
+                ${icons.icon('x', 14)}
+              </button>
+            </div>
+          </form>
+        </div>`;
+    }
+
+    return `
+      <div class="admin-todo-item${done ? ' is-done' : ''}" data-todo-id="${api.escapeHtml(id)}">
+        <button type="button" class="admin-todo-check" data-todo-action="toggle" data-todo-id="${api.escapeHtml(id)}" aria-pressed="${done ? 'true' : 'false'}" aria-label="Alternar conclusão" title="Concluir / Reabrir">
+          ${done ? icons.icon('check', 13) : ''}
+        </button>
+        <span class="admin-todo-text" data-todo-action="edit" data-todo-id="${api.escapeHtml(id)}" title="Clique duas vezes ou no lápis para editar">${api.escapeHtml(text)}</span>
+        <div class="admin-todo-actions">
+          <button type="button" class="admin-todo-icon-btn" data-todo-action="edit-btn" data-todo-id="${api.escapeHtml(id)}" title="Editar tarefa" aria-label="Editar tarefa">
+            ${icons.icon('edit', 14)}
+          </button>
+          <button type="button" class="admin-todo-icon-btn is-danger" data-todo-action="delete" data-todo-id="${api.escapeHtml(id)}" title="Excluir tarefa" aria-label="Excluir tarefa">
+            ${icons.icon('trash', 14)}
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+
+  if (editingTodoId) {
+    const editInput = listEl.querySelector('[data-todo-edit-input]');
+    if (editInput) {
+      editInput.focus();
+      const len = editInput.value.length;
+      editInput.setSelectionRange(len, len);
+    }
+  }
+}
+
+async function handleAdminAddTodo(ev) {
+  ev.preventDefault();
+  if (todoSubmitting) return;
+  const input = $('adminTodoInput');
+  const addBtn = $('adminTodoAddBtn');
+  const text = input ? input.value.trim() : '';
+  if (!text) return;
+
+  todoSubmitting = true;
+  if (addBtn) addBtn.disabled = true;
+  try {
+    const res = await api.apiRequest('POST', '/api/todos', { text });
+    if (input) input.value = '';
+    if (Array.isArray(res?.todos)) {
+      adminTodos = res.todos;
+      renderAdminTodos({ force: true });
+    }
+    showToast('Tarefa adicionada!', 'ok');
+  } catch (err) {
+    showToast(err?.message || 'Erro ao adicionar tarefa.', 'err');
+  } finally {
+    todoSubmitting = false;
+    if (addBtn) addBtn.disabled = false;
+    input?.focus();
+  }
+}
+
+async function handleAdminSaveEditTodo(id, nextText) {
+  const trimmed = String(nextText || '').trim();
+  if (!trimmed) {
+    showToast('O texto da tarefa não pode ficar vazio.', 'err');
+    return;
+  }
+  try {
+    const res = await api.apiRequest('PUT', `/api/todos/${encodeURIComponent(id)}`, { text: trimmed });
+    editingTodoId = null;
+    if (Array.isArray(res?.todos)) {
+      adminTodos = res.todos;
+    }
+    renderAdminTodos({ force: true });
+    showToast('Tarefa atualizada!', 'ok');
+  } catch (err) {
+    showToast(err?.message || 'Erro ao atualizar tarefa.', 'err');
+  }
+}
+
+async function handleAdminToggleTodo(id) {
+  if (!id) return;
+  try {
+    const res = await api.apiRequest('POST', `/api/todos/${encodeURIComponent(id)}/toggle`);
+    if (Array.isArray(res?.todos)) {
+      adminTodos = res.todos;
+      renderAdminTodos({ force: true });
+    }
+  } catch (err) {
+    showToast(err?.message || 'Erro ao atualizar tarefa.', 'err');
+  }
+}
+
+async function handleAdminDeleteTodo(id) {
+  if (!id) return;
+  try {
+    const res = await api.apiRequest('DELETE', `/api/todos/${encodeURIComponent(id)}`);
+    if (editingTodoId === id) editingTodoId = null;
+    if (Array.isArray(res?.todos)) {
+      adminTodos = res.todos;
+      renderAdminTodos({ force: true });
+    }
+    showToast('Tarefa removida.', 'ok');
+  } catch (err) {
+    showToast(err?.message || 'Erro ao remover tarefa.', 'err');
+  }
+}
+
+async function handleAdminClearDoneTodos() {
+  try {
+    const res = await api.apiRequest('POST', '/api/todos/clear-done');
+    if (Array.isArray(res?.todos)) {
+      adminTodos = res.todos;
+      renderAdminTodos({ force: true });
+    }
+    const cleared = Number(res?.cleared || 0);
+    showToast(cleared > 0 ? `${cleared} concluída(s) removida(s).` : 'Nenhuma tarefa concluída para limpar.', 'ok');
+  } catch (err) {
+    showToast(err?.message || 'Erro ao limpar tarefas concluídas.', 'err');
+  }
 }
 
 async function saveVisualConfig() {
@@ -758,6 +956,60 @@ function wireEvents() {
       showToast(err?.message || 'Nenhum feed ICS configurado ou erro ao buscar.', 'err');
     }
   });
+
+  const todoForm = $('adminTodoForm');
+  if (todoForm) {
+    todoForm.addEventListener('submit', handleAdminAddTodo);
+  }
+
+  const clearDoneBtn = $('adminTodoClearDoneBtn');
+  if (clearDoneBtn) {
+    clearDoneBtn.addEventListener('click', handleAdminClearDoneTodos);
+  }
+
+  const todoListEl = $('adminTodoList');
+  if (todoListEl) {
+    todoListEl.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('[data-todo-action]');
+      if (!btn) return;
+      const action = btn.dataset.todoAction;
+      const id = btn.dataset.todoId;
+      if (action === 'toggle') {
+        handleAdminToggleTodo(id);
+      } else if (action === 'edit-btn') {
+        editingTodoId = id;
+        renderAdminTodos({ force: true });
+      } else if (action === 'cancel-edit') {
+        editingTodoId = null;
+        renderAdminTodos({ force: true });
+      } else if (action === 'delete') {
+        handleAdminDeleteTodo(id);
+      }
+    });
+
+    todoListEl.addEventListener('dblclick', (ev) => {
+      const textEl = ev.target.closest('[data-todo-action="edit"]');
+      if (!textEl) return;
+      editingTodoId = textEl.dataset.todoId;
+      renderAdminTodos({ force: true });
+    });
+
+    todoListEl.addEventListener('submit', (ev) => {
+      const form = ev.target.closest('[data-todo-edit-form]');
+      if (!form) return;
+      ev.preventDefault();
+      const input = form.querySelector('[data-todo-edit-input]');
+      handleAdminSaveEditTodo(form.dataset.todoId, input ? input.value : '');
+    });
+
+    todoListEl.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape' && editingTodoId) {
+        ev.preventDefault();
+        editingTodoId = null;
+        renderAdminTodos({ force: true });
+      }
+    });
+  }
 
   $('openPhoneBtn').addEventListener('click', async () => {
     const btn = $('openPhoneBtn');

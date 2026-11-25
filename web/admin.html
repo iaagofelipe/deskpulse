@@ -35,7 +35,7 @@
         </button>
         <button type="button" class="admin-nav-btn" data-section="agenda" role="tab" aria-selected="false">
           <span class="nav-ico" data-icon="agenda"></span>
-          <span>Agenda</span>
+          <span>Agenda &amp; To-Do</span>
         </button>
         <button type="button" class="admin-nav-btn" data-section="ai" role="tab" aria-selected="false">
           <span class="nav-ico" data-icon="ai"></span>
@@ -322,6 +322,31 @@
                 </div>
               </div>
               <div class="live-box" id="agendaLiveBox">Aguardando dados…</div>
+            </div>
+          </div>
+
+          <div class="panel-card">
+            <div class="panel-card-head">
+              <div>
+                <h2>Tarefas (To-Do)</h2>
+                <p>Sincronizadas em tempo real com o celular e a CLI. Alterações são salvas automaticamente.</p>
+              </div>
+              <div class="admin-todo-head-actions">
+                <span class="badge-pill" id="adminTodoCountBadge">0 abertas</span>
+                <button type="button" class="btn btn-danger-soft" id="adminTodoClearDoneBtn" disabled>Limpar concluídas</button>
+              </div>
+            </div>
+
+            <form class="admin-todo-form" id="adminTodoForm" autocomplete="off">
+              <input type="text" id="adminTodoInput" maxlength="240" placeholder="Adicionar nova tarefa para hoje… (Enter para salvar)" autocomplete="off">
+              <button type="submit" class="btn btn-primary" id="adminTodoAddBtn">
+                <span class="btn-ico" data-icon="plus"></span>
+                <span>Adicionar</span>
+              </button>
+            </form>
+
+            <div class="admin-todo-list" id="adminTodoList">
+              <div class="admin-todo-empty">Carregando tarefas…</div>
             </div>
           </div>
         </section>

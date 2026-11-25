@@ -25,7 +25,7 @@ use axum::http::{header, StatusCode};
 use axum::middleware;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures_util::stream::Stream;
 use serde::{Deserialize, Serialize};
@@ -410,6 +410,29 @@ async fn toggle_todo_handler(
     Path(id): Path<String>,
 ) -> Response {
     match state.todos.toggle(&id) {
+        Ok(Some(item)) => (
+            StatusCode::OK,
+            Json(json!({
+                "ok": true,
+                "item": item,
+                "todos": state.todos.list(),
+            })),
+        )
+            .into_response(),
+        Ok(None) => json_error(StatusCode::NOT_FOUND, "todo not found"),
+        Err(err) => json_error(StatusCode::INTERNAL_SERVER_ERROR, err),
+    }
+}
+
+async fn update_todo_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<AddTodoBody>,
+) -> Response {
+    if body.text.trim().is_empty() {
+        return json_error(StatusCode::BAD_REQUEST, "todo text cannot be empty");
+    }
+    match state.todos.update_text(&id, &body.text) {
         Ok(Some(item)) => (
             StatusCode::OK,
             Json(json!({
@@ -1008,7 +1031,12 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/todos", get(list_todos_handler).post(add_todo_handler))
         .route("/api/todos/clear-done", post(clear_done_todos_handler))
         .route("/api/todos/{id}/toggle", post(toggle_todo_handler))
-        .route("/api/todos/{id}", delete(delete_todo_handler))
+        .route(
+            "/api/todos/{id}",
+            put(update_todo_handler)
+                .patch(update_todo_handler)
+                .delete(delete_todo_handler),
+        )
         .route("/api/agenda", get(get_agenda_handler).post(push_agenda_handler))
                         .route("/api/agenda/refresh", post(refresh_agenda_handler))
         .route(
@@ -1563,6 +1591,44 @@ mod tests {
                 .unwrap();
         let todo_id = add_val["item"]["id"].as_str().expect("todo id").to_string();
 
+        // Update todo text via PUT /api/todos/{id}
+        let edit_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri(format!("/api/todos/{todo_id}"))
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json!({ "text": "Revisar PR do Hub (editado)" }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(edit_resp.status(), StatusCode::OK);
+        let edit_val: Value =
+            serde_json::from_slice(&edit_resp.into_body().collect().await.unwrap().to_bytes())
+                .unwrap();
+        assert_eq!(edit_val["item"]["text"], "Revisar PR do Hub (editado)");
+
+        // Empty edit rejected with 400
+        let empty_edit = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("PATCH")
+                    .uri(format!("/api/todos/{todo_id}"))
+                    .header("Host", "127.0.0.1:8765")
+                    .header("X-DeskPulse-Token", "test-token-123")
+                    .header("Content-Type", "application/json")
+                    .body(Body::from(json!({ "text": "   " }).to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty_edit.status(), StatusCode::BAD_REQUEST);
+
         // Toggle todo
         let toggle_resp = app
             .clone()
@@ -1623,7 +1689,7 @@ mod tests {
         let state_val: Value =
             serde_json::from_slice(&state_resp.into_body().collect().await.unwrap().to_bytes())
                 .unwrap();
-        assert_eq!(state_val["todos"][0]["text"], "Revisar PR do Hub");
+        assert_eq!(state_val["todos"][0]["text"], "Revisar PR do Hub (editado)");
         assert_eq!(state_val["todos"][0]["done"], true);
         assert_eq!(state_val["agenda"]["events"][0]["title"], "Daily Standup");
         assert!(state_val.get("antigravity").is_some());

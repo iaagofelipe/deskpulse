@@ -31,6 +31,15 @@
   --red: #ef4444;
   --accent: #60a5fa;
 
+  /* MacBook-style Battery Palette */
+  --battery-fill: #ffffff;
+  --battery-charging: #34c759;
+  --battery-low: #ff3b30;
+  --battery-border: rgba(255, 255, 255, 0.46);
+  --battery-track: rgba(255, 255, 255, 0.09);
+  --battery-glyph: #ffffff;
+  --battery-glyph-halo: rgba(9, 11, 14, 0.9);
+
   /* Soft Alpha Tints */
   --cpu-soft: rgba(96, 165, 250, 0.14);
   --gpu-soft: rgba(79, 209, 197, 0.14);
@@ -117,6 +126,9 @@
 
   --gh-0: #11161b;
   --shadow-card: none;
+
+  --battery-border: rgba(255, 255, 255, 0.52);
+  --battery-glyph-halo: rgba(0, 0, 0, 0.94);
 }
 
 :root[data-theme="amber"] {
@@ -284,4 +296,12 @@
   --gh-4: #216e39;
   --shadow-card: 0 2px 10px rgba(15, 23, 42, 0.06);
   --shadow-modal: 0 20px 56px rgba(15, 23, 42, 0.28);
+
+  --battery-fill: #1e293b;
+  --battery-charging: #16a34a;
+  --battery-low: #dc2626;
+  --battery-border: rgba(15, 23, 42, 0.42);
+  --battery-track: rgba(15, 23, 42, 0.08);
+  --battery-glyph: #0f172a;
+  --battery-glyph-halo: rgba(255, 255, 255, 0.94);
 }

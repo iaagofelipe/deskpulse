@@ -253,9 +253,7 @@ fn launch_app(program: &str, args: &[String]) -> Result<(), ShortcutError> {
 
 fn open_url(url: &str) -> Result<(), ShortcutError> {
     validate_url(url).map_err(ShortcutError::Invalid)?;
-    let mut cmd = std::process::Command::new("explorer.exe");
-    cmd.arg(url);
-    cmd.spawn()
+    crate::tray::open_url_in_browser(url)
         .map_err(|e| ShortcutError::Failed(format!("Falha ao abrir URL '{url}': {e}")))?;
     Ok(())
 }

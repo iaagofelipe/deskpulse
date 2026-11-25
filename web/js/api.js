@@ -47,7 +47,8 @@ export function loadToken() {
       if (hashToken) {
         saveToken(hashToken);
         try {
-          history.replaceState(null, '', '/');
+          const cleanUrl = `${window.location.pathname || '/'}${window.location.search || ''}`;
+          history.replaceState(null, '', cleanUrl);
         } catch {
           // Ignore history API restrictions
         }

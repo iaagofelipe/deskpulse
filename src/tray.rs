@@ -80,7 +80,7 @@ mod platform {
     use std::sync::{mpsc, Arc};
     use std::thread::{self, JoinHandle};
 
-    use windows::core::{w, PCWSTR};
+    use windows::core::{w, HSTRING, PCWSTR};
     use windows::Win32::Foundation::{
         GetLastError, ERROR_CLASS_ALREADY_EXISTS, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM,
     };
@@ -90,16 +90,17 @@ mod platform {
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Shell::{
-        Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
+        ShellExecuteW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
+        NOTIFYICONDATAW,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
         DestroyIcon, DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW,
         LoadIconW, PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow,
         TrackPopupMenu, TranslateMessage, HICON, ICONINFO, IDI_APPLICATION, MF_CHECKED,
-        MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY,
-        TPM_RETURNCMD, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CANCELMODE, WM_CLOSE,
-        WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
+        MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, SW_SHOWNORMAL, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+        TPM_NONOTIFY, TPM_RETURNCMD, WINDOW_EX_STYLE, WINDOW_STYLE, WM_APP, WM_CANCELMODE,
+        WM_CLOSE, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONDBLCLK, WM_NULL, WM_RBUTTONUP, WNDCLASSW,
     };
 
     const TRAY_ICON_UID: u32 = 1;
@@ -411,19 +412,31 @@ mod platform {
         }
     }
 
-    fn open_url_in_browser(url: &str) {
-        let mut cmd = Command::new("explorer.exe");
-        cmd.arg(url);
-        cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
-        let _ = cmd.spawn();
+    pub fn open_url_in_browser(url: &str) -> Result<(), String> {
+        let url_wide = HSTRING::from(url);
+        let result = unsafe {
+            ShellExecuteW(
+                None,
+                w!("open"),
+                PCWSTR::from_raw(url_wide.as_ptr()),
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if (result.0 as isize) > 32 {
+            Ok(())
+        } else {
+            Err(format!("ShellExecuteW failed with code {}", result.0 as isize))
+        }
     }
 
     fn open_browser(port: u16, token: &str) {
-        open_url_in_browser(&format_dashboard_url(port, token));
+        let _ = open_url_in_browser(&format_dashboard_url(port, token));
     }
 
     fn open_admin(port: u16, token: &str) {
-        open_url_in_browser(&format_admin_url(port, token));
+        let _ = open_url_in_browser(&format_admin_url(port, token));
     }
 
     fn open_phone() {
@@ -595,9 +608,13 @@ mod platform {
     pub fn spawn_tray(_opts: TrayOptions) -> Result<TrayHandle, String> {
         Ok(TrayHandle)
     }
+
+    pub fn open_url_in_browser(_url: &str) -> Result<(), String> {
+        Err("abrir URL no navegador só é suportado no Windows".to_string())
+    }
 }
 
-pub use platform::{spawn_tray, TrayHandle};
+pub use platform::{open_url_in_browser, spawn_tray, TrayHandle};
 
 #[cfg(test)]
 mod tests {

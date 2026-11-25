@@ -392,10 +392,7 @@ fn run_admin() -> Result<(), String> {
     let url = format!("http://127.0.0.1:{}/admin#token={}", cfg.port, cfg.token);
     #[cfg(windows)]
     {
-        let mut cmd = StdCommand::new("explorer.exe");
-        cmd.arg(&url);
-        cmd.creation_flags(crate::monitors::CREATE_NO_WINDOW);
-        cmd.spawn()
+        crate::tray::open_url_in_browser(&url)
             .map_err(|e| format!("falha ao abrir navegador: {e}"))?;
     }
     println!("Painel Admin aberto em http://127.0.0.1:{}/admin", cfg.port);

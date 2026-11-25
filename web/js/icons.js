@@ -48,6 +48,7 @@ const ICON_PATHS = {
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M4.93 4.93l1.77 1.77M17.3 17.3l1.77 1.77M2 12h2.5M19.5 12H22M4.93 19.07l1.77-1.77M17.3 6.7l1.77-1.77"/>',
   moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
   plus: '<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
   trash: '<polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>',
   chevron_down: '<polyline points="6 9 12 15 18 9"/>',
   chevron_up: '<polyline points="18 15 12 9 6 15"/>',
@@ -195,4 +196,112 @@ export function weatherIcon(code, size = 44) {
   return wrap(
     '<path d="M12 34h23a6.5 6.5 0 0 0 1.1-12.9A8.5 8.5 0 0 0 19.6 17.5a6 6 0 0 0-7.6 16.5z" fill="#94a3b8" stroke="#cbd5e1" stroke-width="1.2"/>'
   );
+}
+
+function formatBatteryTime(sec) {
+  const n = Number(sec);
+  if (!Number.isFinite(n) || n <= 0) return '';
+  if (n < 60) return '< 1m';
+  const totalMin = Math.round(n / 60);
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours <= 0) return `${mins}m`;
+  return mins > 0 ? `${hours}h ${String(mins).padStart(2, '0')}m` : `${hours}h`;
+}
+
+export function describeBattery(battery) {
+  if (!battery || battery.percent === null || battery.percent === undefined) {
+    return null;
+  }
+  const rawPct = Number(battery.percent);
+  if (!Number.isFinite(rawPct)) return null;
+
+  const percent = Math.max(0, Math.min(100, Math.round(rawPct)));
+  const charging = Boolean(battery.charging);
+  const acPlugged = Boolean(battery.ac_plugged);
+  const batterySaver = Boolean(battery.battery_saver);
+  const timeLabel = !charging && !acPlugged ? formatBatteryTime(battery.time_remaining_sec) : '';
+
+  const isChargingTone = charging || (acPlugged && percent >= 99);
+  const isLowTone = !charging && percent <= 20;
+  const tone = isChargingTone ? 'charging' : (isLowTone ? 'low' : 'normal');
+
+  let statusText = 'Na bateria';
+  if (charging) {
+    statusText = percent >= 100 ? 'Carregada' : 'Carregando';
+  } else if (acPlugged) {
+    statusText = percent >= 99 ? 'Carregada' : 'Na tomada';
+  } else if (timeLabel) {
+    statusText = batterySaver ? `Eco · ${timeLabel}` : `${timeLabel} rest.`;
+  } else if (batterySaver) {
+    statusText = 'Economia';
+  } else if (percent <= 10) {
+    statusText = 'Crítica';
+  } else if (percent <= 20) {
+    statusText = 'Bateria baixa';
+  }
+
+  const titleParts = [`Bateria ${percent}%`, statusText];
+  if (batterySaver && !statusText.includes('Eco')) {
+    titleParts.push('Modo economia');
+  }
+  const title = titleParts.join(' · ');
+
+  return {
+    percent,
+    charging,
+    acPlugged,
+    batterySaver,
+    timeLabel,
+    tone,
+    statusText,
+    title,
+    sig: `${percent}|${charging ? 1 : 0}|${acPlugged ? 1 : 0}|${batterySaver ? 1 : 0}|${timeLabel}`,
+  };
+}
+
+export function batteryIcon({
+  percent = 0,
+  charging = false,
+  acPlugged = false,
+  height = 16,
+} = {}) {
+  const h = sanitizeSize(height, 16);
+  const w = Math.round(h * 2);
+  const pct = Math.max(
+    0,
+    Math.min(100, Number.isFinite(Number(percent)) ? Math.round(Number(percent)) : 0)
+  );
+
+  const isChargingTone = Boolean(charging) || (Boolean(acPlugged) && pct >= 99);
+  const isLowTone = !charging && pct <= 20;
+  const fillColor = isChargingTone
+    ? 'var(--battery-charging)'
+    : (isLowTone ? 'var(--battery-low)' : 'var(--battery-fill)');
+
+  let fillRect = '';
+  if (pct > 0) {
+    const fillW = Math.max(2.0, (pct / 100) * 25.0);
+    const rx = Math.min(1.9, fillW / 2);
+    fillRect = `<rect class="battery-icon-fill" x="3.5" y="4" width="${fillW.toFixed(2)}" height="10" rx="${rx.toFixed(2)}" fill="${fillColor}"/>`;
+  }
+
+  let glyph = '';
+  if (charging) {
+    glyph =
+      '<path class="battery-icon-glyph" d="M17.3 2.5L11.8 9.6h3.8l-1.1 5.9 5.7-7.1h-3.8l0.9-5.9z" fill="var(--battery-glyph)" stroke="var(--battery-glyph-halo)" stroke-width="1.6" stroke-linejoin="round" paint-order="stroke"/>';
+  } else if (acPlugged) {
+    glyph =
+      '<g class="battery-icon-glyph" fill="var(--battery-glyph)" stroke="var(--battery-glyph-halo)" stroke-width="1.3" stroke-linejoin="round" paint-order="stroke">' +
+      '<rect x="13.8" y="3.4" width="1.3" height="2.8" rx="0.6"/>' +
+      '<rect x="16.9" y="3.4" width="1.3" height="2.8" rx="0.6"/>' +
+      '<path d="M12.8 6h6.4v2.6a3.2 3.2 0 0 1-2.45 3.11v2.39a0.75 0.75 0 0 1-1.5 0v-2.39A3.2 3.2 0 0 1 12.8 8.6V6z"/>' +
+      '</g>';
+  }
+
+  return `<svg class="battery-svg" width="${w}" height="${h}" viewBox="0 0 36 18" fill="none" aria-hidden="true" focusable="false">` +
+    `<rect x="1.25" y="1.75" width="29.5" height="14.5" rx="3.8" fill="var(--battery-track)" stroke="var(--battery-border)" stroke-width="1.5"/>` +
+    `<path d="M32.1 6.1h0.7a1.8 1.8 0 0 1 1.8 1.8v2.2a1.8 1.8 0 0 1-1.8 1.8h-0.7z" fill="var(--battery-border)"/>` +
+    `${fillRect}${glyph}` +
+    `</svg>`;
 }

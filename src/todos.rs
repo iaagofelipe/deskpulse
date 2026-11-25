@@ -152,6 +152,35 @@ impl TodoStore {
         Ok(Some(guard.items[idx].clone()))
     }
 
+    pub fn update_text(&self, id_or_index: &str, text: &str) -> Result<Option<TodoItem>, String> {
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return Err("todo text cannot be empty".to_string());
+        }
+
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| "todos store lock poisoned".to_string())?;
+        self.sync_from_disk_if_modified(&mut guard)?;
+
+        let idx_opt = resolve_index_or_id(&guard.items, id_or_index);
+        let Some(idx) = idx_opt else {
+            return Ok(None);
+        };
+
+        let prev_text = guard.items[idx].text.clone();
+        guard.items[idx].text = trimmed.to_string();
+
+        if let Err(e) = self.save_to_disk(&mut guard) {
+            // rollback
+            guard.items[idx].text = prev_text;
+            return Err(e);
+        }
+
+        Ok(Some(guard.items[idx].clone()))
+    }
+
     pub fn remove(&self, id_or_index: &str) -> Result<bool, String> {
         let mut guard = self
             .inner
@@ -493,5 +522,32 @@ mod tests {
         assert_eq!(remaining.len(), 2);
         assert_eq!(remaining[0].id, "alpha");
         assert_eq!(remaining[1].id, "beta");
+    }
+
+    #[test]
+    fn test_todo_update_text_persists_and_rejects_empty() {
+        let dir = TempDir::new().expect("tempdir");
+        let path = dir.path().join("todos.json");
+        let store = TodoStore::open(path.clone()).expect("open store");
+
+        let item = store.add("Tarefa original").expect("add");
+        let updated = store
+            .update_text(&item.id, "  Tarefa editada  ")
+            .expect("update")
+            .expect("found");
+        assert_eq!(updated.id, item.id);
+        assert_eq!(updated.text, "Tarefa editada");
+        assert!(!updated.done);
+
+        // Reject empty text
+        assert!(store.update_text(&item.id, "   ").is_err());
+        // Missing id returns Ok(None)
+        assert!(store.update_text("nao-existe", "Novo texto").expect("missing").is_none());
+
+        // Persisted across reopen
+        let reopened = TodoStore::open(path).expect("reopen");
+        let list = reopened.list();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].text, "Tarefa editada");
     }
 }

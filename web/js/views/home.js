@@ -3,6 +3,7 @@ const SUPPORTED_WIDGETS = new Set(['ai', 'weather', 'agenda', 'media', 'github',
 
 let mountedEl = null;
 let lastClockSig = '';
+let lastBatterySig = '';
 let lastLayoutSig = '';
 let cardSigs = new Map();
 let mediaArtworkKey = '';
@@ -522,6 +523,7 @@ function ensureShell(mount) {
   }
   mountedEl = mount;
   lastClockSig = '';
+  lastBatterySig = '';
   lastLayoutSig = '';
   cardSigs = new Map();
   mediaArtworkKey = '';
@@ -533,7 +535,10 @@ function ensureShell(mount) {
           <span class="home-clock num" data-home-clock>00:00</span>
           <span class="home-theme-chip" data-home-theme-icon aria-hidden="true"></span>
         </button>
-        <div class="home-date" data-home-date></div>
+        <div class="home-header-right">
+          <div class="home-date" data-home-date></div>
+          <button type="button" class="home-battery-pill hidden" data-home-battery data-action="open-pc" aria-label="Bateria do PC"></button>
+        </div>
       </header>
       <div class="bento-grid" data-home-grid></div>
     </div>`;
@@ -543,6 +548,15 @@ function ensureShell(mount) {
     themeBtn.addEventListener('click', () => {
       if (latestCtx && typeof latestCtx.openThemePicker === 'function') {
         latestCtx.openThemePicker();
+      }
+    });
+  }
+
+  const batteryBtn = mount.querySelector('[data-home-battery]');
+  if (batteryBtn) {
+    batteryBtn.addEventListener('click', () => {
+      if (latestCtx && typeof latestCtx.setTab === 'function') {
+        latestCtx.setTab('pc');
       }
     });
   }
@@ -632,6 +646,32 @@ export function render(ctx) {
     const dateEl = mount.querySelector('[data-home-date]');
     if (clockEl) clockEl.textContent = clockText;
     if (dateEl) dateEl.textContent = dateText;
+  }
+
+  const batEl = mount.querySelector('[data-home-battery]');
+  if (batEl && ctx.icons) {
+    const bat = ctx.icons.describeBattery(ctx.state?.pc?.battery);
+    const batSig = bat ? bat.sig : 'none';
+    if (batSig !== lastBatterySig) {
+      lastBatterySig = batSig;
+      if (!bat) {
+        batEl.className = 'home-battery-pill hidden';
+        batEl.innerHTML = '';
+        batEl.removeAttribute('title');
+      } else {
+        batEl.className = `home-battery-pill is-${bat.tone}`;
+        batEl.title = bat.title;
+        batEl.setAttribute('aria-label', bat.title);
+        batEl.innerHTML = `
+          <span class="home-battery-pct num">${bat.percent}%</span>
+          ${ctx.icons.batteryIcon({
+            percent: bat.percent,
+            charging: bat.charging,
+            acPlugged: bat.acPlugged,
+            height: 15,
+          })}`;
+      }
+    }
   }
 
   const grid = mount.querySelector('[data-home-grid]');

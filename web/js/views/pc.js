@@ -59,7 +59,7 @@ function summarizeDisks(disks) {
 }
 
 function renderPcSubView(ctx) {
-  const { state, charts, escapeHtml, formatBytes } = ctx;
+  const { state, charts, icons, escapeHtml, formatBytes } = ctx;
   const pc = state?.pc || null;
 
   if (!pc) {
@@ -97,6 +97,7 @@ function renderPcSubView(ctx) {
   const downRate = formatRate(pc.net_down_bps, formatBytes);
   const upRate = formatRate(pc.net_up_bps, formatBytes);
   const diskSummary = summarizeDisks(pc.disks);
+  const bat = icons ? icons.describeBattery(pc.battery) : null;
   const hardwareFooter = gpu?.name
     ? `${pc.cpu_name || 'CPU'} · ${gpu.name}`
     : (pc.cpu_name || 'CPU');
@@ -110,6 +111,7 @@ function renderPcSubView(ctx) {
     ramSub,
     vramPct !== null ? vramPct.toFixed(1) : 'na',
     vramSub,
+    bat ? bat.sig : 'nobat',
     downRate,
     upRate,
     diskSummary,
@@ -168,12 +170,29 @@ function renderPcSubView(ctx) {
     lossMarkers: false,
   });
 
+  const batteryCard = bat
+    ? `<div class="gauge-card battery-spec-card is-${bat.tone}" title="${escapeHtml(bat.title)}" aria-label="${escapeHtml(bat.title)}">
+        <div class="battery-spec-icon">
+          ${icons.batteryIcon({
+            percent: bat.percent,
+            charging: bat.charging,
+            acPlugged: bat.acPlugged,
+            height: 26,
+          })}
+        </div>
+        <div class="battery-spec-val num">${bat.percent}<span class="battery-spec-unit">%</span></div>
+        <div class="gauge-label">BATERIA</div>
+        <div class="gauge-sub battery-spec-sub" title="${escapeHtml(bat.statusText)}">${escapeHtml(bat.statusText)}</div>
+      </div>`
+    : '';
+
   const html = `
-    <div class="gauge-grid">
+    <div class="gauge-grid${bat ? ' cols-5' : ''}">
       <div class="gauge-card">${cpuGauge}</div>
       <div class="gauge-card">${gpuGauge}</div>
       <div class="gauge-card">${ramGauge}</div>
       <div class="gauge-card">${vramGauge}</div>
+      ${batteryCard}
     </div>
     <div class="card chart-card">
       <div class="card-head">
@@ -295,9 +314,14 @@ function renderToolbarRight(ctx) {
     const upText = Number.isFinite(Number(up)) && Number(up) > 0
       ? `Uptime ${formatDuration(up)}`
       : 'PC';
+    const saver = Boolean(state?.pc?.battery?.battery_saver);
     return {
-      sig: `tb-pc|${upText}`,
-      html: `<span class="badge num">${icons.icon('clock', 12)}<span>${escapeHtml(upText)}</span></span>`,
+      sig: `tb-pc|${upText}|${saver ? 1 : 0}`,
+      html: `
+        <div class="pc-toolbar-badges">
+          ${saver ? '<span class="badge badge-warn">Economia</span>' : ''}
+          <span class="badge num">${icons.icon('clock', 12)}<span>${escapeHtml(upText)}</span></span>
+        </div>`,
     };
   }
 
